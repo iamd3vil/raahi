@@ -1,0 +1,13 @@
+/target
+
+# SQLite databases (config store)
+*.db
+*.db-wal
+*.db-shm
+
+# Runtime artifacts (materialized TLS cert/key, etc.)
+/.raahi/
+
+# UI
+/ui/node_modules
+/ui/build

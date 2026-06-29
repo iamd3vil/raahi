@@ -1,0 +1,66 @@
+[package]
+name = "raahi"
+version = "0.1.0"
+edition = "2024"
+description = "Raahi — a configurable reverse proxy built on Pingora"
+default-run = "raahi"
+
+[[bin]]
+name = "raahi"
+path = "src/main.rs"
+
+[dependencies]
+raahi-core = { workspace = true }
+raahi-store = { workspace = true }
+raahi-proxy = { workspace = true }
+raahi-api = { workspace = true }
+pingora = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[workspace]
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+
+[workspace.dependencies]
+raahi-core = { path = "crates/raahi-core" }
+raahi-store = { path = "crates/raahi-store" }
+raahi-proxy = { path = "crates/raahi-proxy" }
+raahi-api = { path = "crates/raahi-api" }
+
+pingora = { version = "0.8.1", default-features = false, features = ["proxy", "rustls"] }
+pingora-limits = "0.8.1"
+
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+arc-swap = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive", "env"] }
+
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate", "json", "chrono"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+axum = { version = "0.8", features = ["macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "trace", "cors"] }
+mime_guess = "2"
+futures = "0.3"
+
+bcrypt = "0.17"
+rcgen = "0.13"
+
+[profile.release]
+opt-level = 3
+lto = "thin"

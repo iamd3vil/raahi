@@ -1,0 +1,18 @@
+[package]
+name = "raahi-store"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "Raahi config store: SQLite persistence and snapshot building"
+
+[dependencies]
+raahi-core = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

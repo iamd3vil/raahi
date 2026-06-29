@@ -1,0 +1,16 @@
+//! Raahi core: pure domain types, the compiled in-memory [`ProxyConfig`] snapshot,
+//! and the router matching logic. No I/O, no Pingora — this crate is shared by the
+//! store, the data plane, and the admin API.
+
+mod config;
+mod matching;
+mod model;
+mod spec;
+
+pub use config::{ProxyConfig, RouteMatch};
+pub use matching::{host_matches, path_matches, strip_prefix};
+pub use model::*;
+pub use spec::*;
+
+/// Database row id type used across all entities.
+pub type Id = i64;
