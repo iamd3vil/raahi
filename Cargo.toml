@@ -35,7 +35,7 @@ raahi-store = { path = "crates/raahi-store" }
 raahi-proxy = { path = "crates/raahi-proxy" }
 raahi-api = { path = "crates/raahi-api" }
 
-pingora = { version = "0.8.1", default-features = false, features = ["proxy", "rustls"] }
+pingora = { version = "0.8.1", default-features = false, features = ["proxy", "boringssl"] }
 pingora-limits = "0.8.1"
 
 tokio = { version = "1", features = ["full"] }

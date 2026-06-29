@@ -23,4 +23,3 @@ futures = { workspace = true }
 tokio-stream = { version = "0.1", features = ["sync"] }
 mime_guess = { workspace = true }
 bcrypt = { workspace = true }
-rcgen = { workspace = true }

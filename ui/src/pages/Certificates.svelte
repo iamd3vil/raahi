@@ -36,7 +36,7 @@
         cert_pem: form.cert_pem,
         key_pem: form.key_pem,
       });
-      toast('Certificate added. Set it active in Settings, then restart to bind HTTPS.', 'ok');
+      toast('Certificate added. Restart to load it on the HTTPS listener.', 'ok');
       open = false;
       await load();
     } catch (e) {
@@ -64,9 +64,9 @@
 </div>
 
 <div class="note">
-  <strong>Note:</strong> Pingora's rustls backend serves one certificate per HTTPS listener (a wildcard covers
-  most cases). Choose the active certificate in <span class="code">Settings</span>; it binds on restart. Per-domain
-  SNI selection requires the boringssl backend (a build-time switch).
+  <strong>Note:</strong> Certificates are served by <strong>SNI</strong> — the HTTPS listener picks the
+  matching certificate per request (exact or <span class="code">*.wildcard</span>), falling back to the
+  active certificate set in <span class="code">Settings</span>. Newly added certificates are loaded on restart.
 </div>
 
 <div class="panel">

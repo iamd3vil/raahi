@@ -1,8 +1,8 @@
 //! Raahi entrypoint: boots the SQLite store, compiles the initial config snapshot,
-//! and runs the Pingora data plane (HTTP + optional rustls HTTPS) plus — from
-//! milestone 3 — the admin API as a background service.
+//! and runs the Pingora data plane (HTTP + optional boringssl HTTPS with per-SNI
+//! certificate selection) plus the admin API and health checks as background services.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,7 +12,7 @@ use pingora::prelude::*;
 use pingora::services::background::background_service;
 use raahi_api::ApiService;
 use raahi_core::{RouteSpec, ServiceSpec, TargetSpec};
-use raahi_proxy::{config_handle, Metrics, RaahiProxy};
+use raahi_proxy::{config_handle, sni_tls_settings, CertStore, Metrics, RaahiProxy};
 use raahi_store::Store;
 use tracing::{info, warn};
 
@@ -23,10 +23,6 @@ struct Cli {
     #[arg(long, env = "RAAHI_DB", default_value = "sqlite://raahi.db")]
     db: String,
 
-    /// Directory for runtime artifacts (materialized TLS cert/key).
-    #[arg(long, env = "RAAHI_RUN_DIR", default_value = ".raahi")]
-    run_dir: PathBuf,
-
     /// Seed a demo service + route on startup (idempotent-ish; skips if a service exists).
     #[arg(long)]
     seed: bool,
@@ -34,6 +30,10 @@ struct Cli {
     /// Override the proxy HTTP listen address (else taken from settings).
     #[arg(long)]
     http_addr: Option<String>,
+
+    /// Override the proxy HTTPS listen address (else taken from settings).
+    #[arg(long)]
+    https_addr: Option<String>,
 
     /// Override the admin API listen address (else taken from settings).
     #[arg(long)]
@@ -46,32 +46,6 @@ struct Cli {
 
 fn map_pingora<E: std::fmt::Display>(e: E) -> anyhow::Error {
     anyhow::anyhow!("pingora: {e}")
-}
-
-/// Materialize the active certificate to disk so the (rustls) TLS listener can load
-/// it. Returns the (cert_path, key_path) if a cert is configured.
-async fn materialize_cert(
-    store: &Store,
-    cert_id: i64,
-    dir: &Path,
-) -> anyhow::Result<Option<(String, String)>> {
-    let Some(cert) = store.get_certificate(cert_id).await? else {
-        return Ok(None);
-    };
-    std::fs::create_dir_all(dir).with_context(|| format!("create run dir {}", dir.display()))?;
-    let cert_path = dir.join("active-cert.pem");
-    let key_path = dir.join("active-key.pem");
-    std::fs::write(&cert_path, cert.cert_pem.as_bytes())?;
-    std::fs::write(&key_path, cert.key_pem.as_bytes())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(Some((
-        cert_path.display().to_string(),
-        key_path.display().to_string(),
-    )))
 }
 
 /// Insert a demo service (two local targets) + catch-all route if the DB is empty.
@@ -132,7 +106,7 @@ fn main() -> anyhow::Result<()> {
         .enable_all()
         .build()?;
 
-    let (snapshot, settings, tls_paths) = setup_rt.block_on(async {
+    let (snapshot, settings, cert_store) = setup_rt.block_on(async {
         let store = Store::connect(&cli.db)
             .await
             .with_context(|| format!("open db {}", cli.db))?;
@@ -141,11 +115,11 @@ fn main() -> anyhow::Result<()> {
         }
         let snapshot = store.build_snapshot().await?;
         let settings = snapshot.settings.clone();
-        let tls_paths = match settings.active_certificate_id {
-            Some(id) => materialize_cert(&store, id, &cli.run_dir).await?,
-            None => None,
-        };
-        Ok::<_, anyhow::Error>((snapshot, settings, tls_paths))
+        // Load all certificates into an in-memory SNI store (boringssl serves them all).
+        let certs = store.list_certificates().await?;
+        let cert_store = CertStore::build(certs, settings.active_certificate_id)
+            .map_err(|e| anyhow::anyhow!("load certificates: {e}"))?;
+        Ok::<_, anyhow::Error>((snapshot, settings, cert_store))
     })?;
     drop(setup_rt);
 
@@ -165,13 +139,20 @@ fn main() -> anyhow::Result<()> {
     proxy_svc.add_tcp(&http_addr);
     info!("proxy HTTP listener on {http_addr}");
 
-    if let Some(https_addr) = &settings.proxy_https_addr {
-        match &tls_paths {
-            Some((cert, key)) => match proxy_svc.add_tls(https_addr, cert, key) {
-                Ok(()) => info!("proxy HTTPS (rustls) listener on {https_addr}"),
-                Err(e) => warn!("TLS listener disabled ({https_addr}): {e}"),
-            },
-            None => info!("HTTPS address set but no active certificate; HTTPS disabled"),
+    let https_addr = cli.https_addr.or_else(|| settings.proxy_https_addr.clone());
+    if let Some(https_addr) = &https_addr {
+        match cert_store {
+            Some(store) => {
+                let n = store.len();
+                match sni_tls_settings(Arc::new(store)) {
+                    Ok(settings_tls) => {
+                        proxy_svc.add_tls_with_settings(https_addr, None, settings_tls);
+                        info!("proxy HTTPS (boringssl) listener on {https_addr}; {n} cert(s), per-SNI selection");
+                    }
+                    Err(e) => warn!("TLS listener disabled ({https_addr}): {e}"),
+                }
+            }
+            None => info!("HTTPS address set but no certificates configured; HTTPS disabled"),
         }
     }
 

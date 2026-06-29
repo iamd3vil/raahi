@@ -44,10 +44,10 @@ SQLite and atomically swapped into the running proxy with no restart.
 ## Prerequisites
 
 - **Rust** ≥ 1.84 (uses edition 2024).
-- **cmake** + a C compiler — required to build Pingora's native dependencies
-  (`aws-lc-sys` for rustls, `libz-ng-sys` for compression). On most distros:
-  `apt install cmake` / `pacman -S cmake`. Without root, `uv tool install cmake`
-  (or `pip install cmake`) provides a binary on `PATH`.
+- **cmake**, a **Go** toolchain, and a C/C++ compiler — required to build Pingora's
+  native dependencies (BoringSSL via `boring-sys`, and `libz-ng-sys` for compression).
+  On most distros: `apt install cmake golang` / `pacman -S cmake go`. Without root,
+  `uv tool install cmake` (or `pip install cmake`) provides cmake on `PATH`.
 - **Node ≥ 20 + pnpm** to build the UI.
 
 ## Quick start
@@ -110,13 +110,15 @@ curl -X POST localhost:9080/api/v1/services \
 
 ## TLS notes
 
-Raahi uses **rustls** as requested. Pingora's rustls backend is experimental and does
-**not** support per-SNI certificate callbacks, so the HTTPS listener serves **one
-certificate** (a wildcard covers most cases). Manage certificates in the UI, mark one
-active in Settings, and restart to bind it. If you later need dynamic per-domain certs,
-switch the `pingora` TLS feature to `boringssl` — no data-plane code changes are needed.
+Raahi terminates TLS with the **boringssl** backend, which supports **dynamic per-SNI
+certificate selection**: all configured certificates are loaded into memory and a single
+HTTPS listener serves the right one based on the SNI server name (exact or `*.wildcard`),
+falling back to the active/default certificate for non-SNI or unmatched requests. Upstream
+(proxy→backend) TLS is supported too.
 
-Cert private keys are treated as secrets: never logged and never returned by the API.
+Manage certificates in the UI; the listener loads them at startup (restart to pick up
+newly added/removed certificates). Cert private keys are treated as secrets: they stay in
+memory, are never written to disk, never logged, and never returned by the API.
 
 ## Security notes
 
@@ -133,5 +135,4 @@ Cert private keys are treated as secrets: never logged and never returned by the
 
 - **WASM user-function plugins** — the plugin trait/registry is the seam; native plugins
   ship today, WASM is a later phase.
-- Dynamic per-domain SNI certs (needs the boringssl backend).
-- gRPC / raw TCP stream proxying, multi-node config sync.
+- Runtime (no-restart) certificate reload; gRPC / raw TCP stream proxying; multi-node config sync.

@@ -6,11 +6,13 @@ mod metrics;
 mod plugins;
 mod proxy;
 mod runtime;
+mod tls;
 
 pub use health::HealthService;
 pub use metrics::{Metrics, MetricsSnapshot, RequestRecord, RouteHit};
 pub use proxy::{Ctx, RaahiProxy};
 pub use runtime::{BackendRt, ConfigHandle, RuntimeConfig, ServiceRuntime};
+pub use tls::{sni_tls_settings, CertStore};
 
 use raahi_core::ProxyConfig;
 
