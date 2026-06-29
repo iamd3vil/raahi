@@ -13,7 +13,7 @@ use axum::routing::get;
 use axum::Router;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
-use raahi_proxy::{ConfigHandle, Metrics};
+use raahi_proxy::{CertHandle, CertStore, ConfigHandle, Metrics};
 use raahi_store::Store;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
@@ -27,6 +27,7 @@ pub struct AppState {
     pub store: Store,
     pub config: ConfigHandle,
     pub metrics: Arc<Metrics>,
+    pub cert_handle: CertHandle,
     pub ui_dir: Option<PathBuf>,
 }
 
@@ -34,6 +35,18 @@ pub struct AppState {
 pub async fn reload(state: &AppState) -> ApiResult<()> {
     let snap = state.store.build_snapshot().await?;
     state.config.store(snap);
+    Ok(())
+}
+
+/// Rebuild the in-memory certificate store from the DB and swap it into the live TLS
+/// handle — applies certificate add/remove/replace and default changes with no restart
+/// (provided the HTTPS listener is already bound).
+pub async fn reload_certs(state: &AppState) -> ApiResult<()> {
+    let certs = state.store.list_certificates().await?;
+    let settings = state.store.get_settings().await?;
+    state
+        .cert_handle
+        .store(CertStore::from_certs(certs, settings.active_certificate_id));
     Ok(())
 }
 
@@ -96,6 +109,7 @@ pub struct ApiService {
     pub db_url: String,
     pub config: ConfigHandle,
     pub metrics: Arc<Metrics>,
+    pub cert_handle: CertHandle,
     pub ui_dir: Option<PathBuf>,
 }
 
@@ -118,6 +132,7 @@ impl BackgroundService for ApiService {
             store,
             config: self.config.clone(),
             metrics: self.metrics.clone(),
+            cert_handle: self.cert_handle.clone(),
             ui_dir: self.ui_dir.clone(),
         };
         let app = build_router(state);

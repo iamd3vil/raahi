@@ -13,7 +13,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
 
 use crate::error::{ApiError, ApiResult};
-use crate::{reload, AppState};
+use crate::{reload, reload_certs, AppState};
 
 type Id = i64;
 
@@ -267,14 +267,11 @@ pub async fn create_certificate(
     State(s): State<AppState>,
     Json(spec): Json<CertificateSpec>,
 ) -> ApiResult<Json<Certificate>> {
-    if !spec.cert_pem.contains("BEGIN CERTIFICATE") {
-        return Err(ApiError::BadRequest("cert_pem is not a PEM certificate".into()));
-    }
-    if !spec.key_pem.contains("PRIVATE KEY") {
-        return Err(ApiError::BadRequest("key_pem is not a PEM private key".into()));
-    }
+    // Validate the PEM actually parses (cert + private key) before storing.
+    raahi_proxy::validate_cert(&spec.cert_pem, &spec.key_pem).map_err(ApiError::BadRequest)?;
     let c = s.store.create_certificate(&spec).await?;
-    // Certs only take effect on the TLS listener at (re)start; no live swap.
+    // Live-swap the cert store (no restart) if the HTTPS listener is already bound.
+    reload_certs(&s).await?;
     Ok(Json(c))
 }
 
@@ -282,6 +279,7 @@ pub async fn delete_certificate(State(s): State<AppState>, Path(id): Path<Id>) -
     if !s.store.delete_certificate(id).await? {
         return Err(ApiError::NotFound);
     }
+    reload_certs(&s).await?;
     Ok(Json(json!({ "deleted": true })))
 }
 
@@ -296,6 +294,8 @@ pub async fn update_settings(
 ) -> ApiResult<Json<Settings>> {
     let settings = s.store.update_settings(&spec).await?;
     reload(&s).await?;
+    // The default certificate (active_certificate_id) may have changed — swap it live.
+    reload_certs(&s).await?;
     Ok(Json(settings))
 }
 

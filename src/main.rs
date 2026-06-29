@@ -12,7 +12,7 @@ use pingora::prelude::*;
 use pingora::services::background::background_service;
 use raahi_api::ApiService;
 use raahi_core::{RouteSpec, ServiceSpec, TargetSpec};
-use raahi_proxy::{config_handle, sni_tls_settings, CertStore, Metrics, RaahiProxy};
+use raahi_proxy::{config_handle, sni_tls_settings, CertHandle, CertStore, Metrics, RaahiProxy};
 use raahi_store::Store;
 use tracing::{info, warn};
 
@@ -117,14 +117,17 @@ fn main() -> anyhow::Result<()> {
         let settings = snapshot.settings.clone();
         // Load all certificates into an in-memory SNI store (boringssl serves them all).
         let certs = store.list_certificates().await?;
-        let cert_store = CertStore::build(certs, settings.active_certificate_id)
-            .map_err(|e| anyhow::anyhow!("load certificates: {e}"))?;
+        let cert_store = CertStore::from_certs(certs, settings.active_certificate_id);
         Ok::<_, anyhow::Error>((snapshot, settings, cert_store))
     })?;
     drop(setup_rt);
 
     let config = config_handle(snapshot);
     let metrics = Arc::new(Metrics::new());
+    // Live cert handle shared by the TLS listener (reads it per handshake) and the admin
+    // API (swaps it on certificate/default changes — no restart).
+    let cert_count = cert_store.len();
+    let cert_handle = CertHandle::new(cert_store);
 
     let http_addr = cli.http_addr.unwrap_or_else(|| settings.proxy_http_addr.clone());
 
@@ -141,18 +144,16 @@ fn main() -> anyhow::Result<()> {
 
     let https_addr = cli.https_addr.or_else(|| settings.proxy_https_addr.clone());
     if let Some(https_addr) = &https_addr {
-        match cert_store {
-            Some(store) => {
-                let n = store.len();
-                match sni_tls_settings(Arc::new(store)) {
-                    Ok(settings_tls) => {
-                        proxy_svc.add_tls_with_settings(https_addr, None, settings_tls);
-                        info!("proxy HTTPS (boringssl) listener on {https_addr}; {n} cert(s), per-SNI selection");
-                    }
-                    Err(e) => warn!("TLS listener disabled ({https_addr}): {e}"),
+        if cert_count > 0 {
+            match sni_tls_settings(cert_handle.clone()) {
+                Ok(settings_tls) => {
+                    proxy_svc.add_tls_with_settings(https_addr, None, settings_tls);
+                    info!("proxy HTTPS (boringssl) listener on {https_addr}; {cert_count} cert(s), live per-SNI selection");
                 }
+                Err(e) => warn!("TLS listener disabled ({https_addr}): {e}"),
             }
-            None => info!("HTTPS address set but no certificates configured; HTTPS disabled"),
+        } else {
+            info!("HTTPS address set but no certificates configured; HTTPS disabled (add a certificate and restart to bind the listener)");
         }
     }
 
@@ -165,6 +166,7 @@ fn main() -> anyhow::Result<()> {
         db_url: cli.db.clone(),
         config: config.clone(),
         metrics: metrics.clone(),
+        cert_handle: cert_handle.clone(),
         ui_dir: Some(cli.ui_dir.clone()),
     };
     server.add_service(background_service("admin-api", api));

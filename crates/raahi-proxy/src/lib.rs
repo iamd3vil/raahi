@@ -12,7 +12,7 @@ pub use health::HealthService;
 pub use metrics::{Metrics, MetricsSnapshot, RequestRecord, RouteHit};
 pub use proxy::{Ctx, RaahiProxy};
 pub use runtime::{BackendRt, ConfigHandle, RuntimeConfig, ServiceRuntime};
-pub use tls::{sni_tls_settings, CertStore};
+pub use tls::{sni_tls_settings, validate_cert, CertHandle, CertStore};
 
 use raahi_core::ProxyConfig;
 

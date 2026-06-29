@@ -36,7 +36,7 @@
         cert_pem: form.cert_pem,
         key_pem: form.key_pem,
       });
-      toast('Certificate added. Restart to load it on the HTTPS listener.', 'ok');
+      toast('Certificate added — applied live.', 'ok');
       open = false;
       await load();
     } catch (e) {
@@ -66,7 +66,8 @@
 <div class="note">
   <strong>Note:</strong> Certificates are served by <strong>SNI</strong> — the HTTPS listener picks the
   matching certificate per request (exact or <span class="code">*.wildcard</span>), falling back to the
-  active certificate set in <span class="code">Settings</span>. Newly added certificates are loaded on restart.
+  active certificate set in <span class="code">Settings</span>. Certificate changes apply live (no restart)
+  while HTTPS is running.
 </div>
 
 <div class="panel">

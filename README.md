@@ -116,8 +116,10 @@ HTTPS listener serves the right one based on the SNI server name (exact or `*.wi
 falling back to the active/default certificate for non-SNI or unmatched requests. Upstream
 (proxy→backend) TLS is supported too.
 
-Manage certificates in the UI; the listener loads them at startup (restart to pick up
-newly added/removed certificates). Cert private keys are treated as secrets: they stay in
+Manage certificates in the UI — add, replace, remove, or change the default, and the
+running HTTPS listener picks them up **live, with no restart**. (One exception: if HTTPS
+starts with zero certificates the listener isn't bound, so enabling HTTPS for the very
+first time needs a restart.) Cert private keys are treated as secrets: they stay in
 memory, are never written to disk, never logged, and never returned by the API.
 
 ## Security notes
@@ -135,4 +137,4 @@ memory, are never written to disk, never logged, and never returned by the API.
 
 - **WASM user-function plugins** — the plugin trait/registry is the seam; native plugins
   ship today, WASM is a later phase.
-- Runtime (no-restart) certificate reload; gRPC / raw TCP stream proxying; multi-node config sync.
+- gRPC / raw TCP stream proxying; multi-node config sync.
