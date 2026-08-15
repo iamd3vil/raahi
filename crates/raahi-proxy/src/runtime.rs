@@ -119,7 +119,7 @@ impl RuntimeConfig {
             );
         }
 
-        let plugins = PluginSet::build(&data.plugins);
+        let plugins = PluginSet::build(&data.plugins, prev.map(|p| &p.plugins));
 
         RuntimeConfig {
             data: Arc::new(data),

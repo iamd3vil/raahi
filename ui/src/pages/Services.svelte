@@ -1,15 +1,29 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api, ApiError } from '../lib/api';
-  import type { LbAlgorithm, Protocol, Service, Target } from '../lib/types';
+  import type { LbAlgorithm, Protocol, Service, Target, TargetHealth } from '../lib/types';
   import { toast } from '../lib/state.svelte';
   import Drawer from '../lib/components/Drawer.svelte';
+  import EmptyState from '../lib/components/EmptyState.svelte';
 
   let services = $state<Service[]>([]);
   let targetsBy = $state<Record<number, Target[]>>({});
+  let health = $state<Map<number, boolean>>(new Map());
   let loading = $state(true);
   let open = $state(false);
   let editing = $state<Service | null>(null);
+
+  async function loadHealth() {
+    try {
+      const hs: TargetHealth[] = await api.health();
+      health = new Map(hs.map((h) => [h.target_id, h.healthy]));
+    } catch {
+      /* ignore */
+    }
+  }
+  // disabled targets are "off", enabled ones reflect the live check
+  const tState = (t: Target): 'ok' | 'err' | 'off' =>
+    !t.enabled ? 'off' : (health.get(t.id) ?? true) ? 'ok' : 'err';
 
   let form = $state({
     name: '',
@@ -129,7 +143,12 @@
 
   const editingTargets = $derived(editing ? (targetsBy[editing.id] ?? []) : []);
 
-  onMount(load);
+  onMount(() => {
+    load();
+    loadHealth();
+    const t = setInterval(loadHealth, 5000);
+    return () => clearInterval(t);
+  });
 </script>
 
 <div class="head-actions">
@@ -141,7 +160,15 @@
   {#if loading}
     <div class="empty"><span class="spinner"></span></div>
   {:else if services.length === 0}
-    <div class="empty">No services yet. Create one to route traffic to.</div>
+    <EmptyState
+      icon="M5 4h14a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm0 10h14a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1z"
+      title="No services yet"
+      description="A service groups one or more upstream targets behind a load-balancing policy. Routes send traffic to services."
+    >
+      {#snippet action()}
+        <button class="btn btn-primary" onclick={openNew}>+ Create your first service</button>
+      {/snippet}
+    </EmptyState>
   {:else}
     <div class="table-wrap">
       <table class="table">
@@ -157,10 +184,14 @@
               <td class="mono">{s.lb_algorithm}</td>
               <td>
                 {#if ts.length === 0}
-                  <span class="faint">none</span>
+                  <span class="badge warn">no targets</span>
                 {:else}
                   {#each ts as t}
-                    <span class="chip"><span class="dot {t.enabled ? 'ok' : 'err'}"></span> {t.host}:{t.port}</span>
+                    {@const st = tState(t)}
+                    <span class="chip" title={st === 'off' ? 'disabled' : st === 'ok' ? 'healthy' : 'unhealthy'}>
+                      <span class="dot {st === 'off' ? '' : st}"></span>
+                      {t.host}:{t.port}
+                    </span>
                   {/each}
                 {/if}
               </td>
@@ -225,10 +256,12 @@
     <h3 class="sub">Targets</h3>
     <div class="tgts">
       {#each editingTargets as t (t.id)}
+        {@const st = tState(t)}
         <div class="tgt-row">
-          <span class="dot {t.enabled ? 'ok' : 'err'}"></span>
+          <span class="dot {st === 'off' ? '' : st}" title={st === 'off' ? 'disabled' : st === 'ok' ? 'healthy' : 'unhealthy'}></span>
           <span class="mono">{t.host}:{t.port}</span>
-          <span class="faint">w{t.weight}</span>
+          <span class="faint">weight {t.weight}</span>
+          {#if st === 'err'}<span class="badge err">down</span>{/if}
           <div class="spacer"></div>
           <button class="toggle {t.enabled ? 'on' : ''}" aria-label="Enable" onclick={() => toggleTarget(t)}></button>
           <button class="btn btn-sm btn-ghost" onclick={() => delTarget(t)}>✕</button>

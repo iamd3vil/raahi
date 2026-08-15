@@ -12,6 +12,7 @@ use pingora::prelude::*;
 use pingora::{Error, ErrorType};
 use raahi_core::{strip_prefix, Id, Plugin};
 
+use crate::httplog::{LogEvent, LogSender};
 use crate::metrics::{Metrics, RequestRecord};
 use crate::plugins::{type_priority, Action, Effects, ReqInput, ShortResp};
 use crate::runtime::ConfigHandle;
@@ -20,6 +21,8 @@ use crate::runtime::ConfigHandle;
 pub struct RaahiProxy {
     pub config: ConfigHandle,
     pub metrics: Arc<Metrics>,
+    /// Channel to the http-log delivery service.
+    pub log_tx: LogSender,
 }
 
 /// Per-request state threaded across filter phases.
@@ -281,12 +284,13 @@ impl ProxyHttp for RaahiProxy {
             .response_written()
             .map(|r| r.status.as_u16())
             .unwrap_or(0);
+        // Microsecond precision, rounded to 3 decimals for clean JSON.
         let latency_ms = ctx
             .start
-            .map(|s| s.elapsed().as_millis() as u64)
-            .unwrap_or(0);
+            .map(|s| (s.elapsed().as_secs_f64() * 1_000_000.0).round() / 1000.0)
+            .unwrap_or(0.0);
 
-        self.metrics.record(RequestRecord {
+        let record = RequestRecord {
             ts_ms: now_ms(),
             method: std::mem::take(&mut ctx.method),
             host: std::mem::take(&mut ctx.host),
@@ -297,6 +301,40 @@ impl ProxyHttp for RaahiProxy {
             service_id: ctx.service_id,
             upstream: ctx.upstream_addr.take(),
             consumer: ctx.consumer.take(),
-        });
+        };
+
+        // http-log: forward the record to every applicable log plugin's collector.
+        {
+            let rc = self.config.load();
+            let logs: Vec<&raahi_core::Plugin> = match (ctx.route_id, ctx.service_id) {
+                (Some(rid), Some(sid)) => rc
+                    .data
+                    .plugins_for(rid, sid)
+                    .into_iter()
+                    .filter(|p| p.plugin_type == raahi_core::PluginType::HttpLog)
+                    .collect(),
+                // Unmatched requests are still visible to global log plugins.
+                _ => rc
+                    .data
+                    .plugins
+                    .iter()
+                    .filter(|p| {
+                        p.enabled
+                            && p.plugin_type == raahi_core::PluginType::HttpLog
+                            && p.scope == raahi_core::PluginScope::Global
+                    })
+                    .collect(),
+            };
+            for p in logs {
+                if let Some(cfg) = rc.plugins.httplog_cfg(p.id) {
+                    let _ = self.log_tx.send(LogEvent {
+                        cfg: cfg.clone(),
+                        record: record.clone(),
+                    });
+                }
+            }
+        }
+
+        self.metrics.record(record);
     }
 }

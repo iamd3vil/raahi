@@ -2,6 +2,7 @@
 
 export type View =
   | 'dashboard'
+  | 'requests'
   | 'routes'
   | 'services'
   | 'plugins'

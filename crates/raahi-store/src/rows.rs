@@ -83,6 +83,7 @@ pub fn map_consumer(r: &SqliteRow) -> Consumer {
     Consumer {
         id: r.get("id"),
         username: r.get("username"),
+        groups: json_strings(&r.get::<String, _>("groups")),
     }
 }
 

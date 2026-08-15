@@ -129,10 +129,17 @@ pub struct Route {
 pub enum PluginType {
     KeyAuth,
     BasicAuth,
+    Jwt,
+    Acl,
+    IpRestriction,
     RateLimit,
+    RequestSizeLimit,
+    RequestTermination,
+    Redirect,
     Cors,
     RequestTransform,
     ResponseTransform,
+    HttpLog,
 }
 
 impl PluginType {
@@ -140,26 +147,40 @@ impl PluginType {
         match self {
             PluginType::KeyAuth => "key-auth",
             PluginType::BasicAuth => "basic-auth",
+            PluginType::Jwt => "jwt",
+            PluginType::Acl => "acl",
+            PluginType::IpRestriction => "ip-restriction",
             PluginType::RateLimit => "rate-limit",
+            PluginType::RequestSizeLimit => "request-size-limit",
+            PluginType::RequestTermination => "request-termination",
+            PluginType::Redirect => "redirect",
             PluginType::Cors => "cors",
             PluginType::RequestTransform => "request-transform",
             PluginType::ResponseTransform => "response-transform",
+            PluginType::HttpLog => "http-log",
         }
     }
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
             "key-auth" => PluginType::KeyAuth,
             "basic-auth" => PluginType::BasicAuth,
+            "jwt" => PluginType::Jwt,
+            "acl" => PluginType::Acl,
+            "ip-restriction" => PluginType::IpRestriction,
             "rate-limit" => PluginType::RateLimit,
+            "request-size-limit" => PluginType::RequestSizeLimit,
+            "request-termination" => PluginType::RequestTermination,
+            "redirect" => PluginType::Redirect,
             "cors" => PluginType::Cors,
             "request-transform" => PluginType::RequestTransform,
             "response-transform" => PluginType::ResponseTransform,
+            "http-log" => PluginType::HttpLog,
             _ => return None,
         })
     }
     /// Whether this plugin authenticates the request (sets a consumer).
     pub fn is_auth(self) -> bool {
-        matches!(self, PluginType::KeyAuth | PluginType::BasicAuth)
+        matches!(self, PluginType::KeyAuth | PluginType::BasicAuth | PluginType::Jwt)
     }
 }
 
@@ -209,6 +230,9 @@ pub struct Plugin {
 pub struct Consumer {
     pub id: Id,
     pub username: String,
+    /// Group names used by the `acl` plugin's allow/deny lists.
+    #[serde(default)]
+    pub groups: Vec<String>,
 }
 
 /// Credential kind. Mirrors the auth [`PluginType`]s.
@@ -217,6 +241,7 @@ pub struct Consumer {
 pub enum CredentialType {
     KeyAuth,
     BasicAuth,
+    Jwt,
 }
 
 impl CredentialType {
@@ -224,12 +249,14 @@ impl CredentialType {
         match self {
             CredentialType::KeyAuth => "key-auth",
             CredentialType::BasicAuth => "basic-auth",
+            CredentialType::Jwt => "jwt",
         }
     }
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
             "key-auth" => CredentialType::KeyAuth,
             "basic-auth" => CredentialType::BasicAuth,
+            "jwt" => CredentialType::Jwt,
             _ => return None,
         })
     }
@@ -239,6 +266,9 @@ impl CredentialType {
 ///
 /// - key-auth: `identifier` = API key, `secret` unused.
 /// - basic-auth: `identifier` = username, `secret` = bcrypt password hash.
+/// - jwt: `identifier` = key (matched against the token's key claim, e.g. `iss`),
+///   `secret` = JSON `{"algorithm": "...", "secret": "..."}` (HMAC secret or RSA
+///   public key PEM).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConsumerCredential {
     pub id: Id,

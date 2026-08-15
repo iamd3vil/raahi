@@ -25,7 +25,19 @@ pub struct ProxyConfig {
     pub key_index: HashMap<String, Id>,
     /// basic-auth: username -> (consumer id, bcrypt hash).
     pub basic_index: HashMap<String, (Id, String)>,
+    /// jwt: key claim value (e.g. `iss`) -> verification material.
+    pub jwt_index: HashMap<String, JwtCred>,
     pub settings: Settings,
+}
+
+/// JWT verification material for one consumer credential.
+#[derive(Debug, Clone)]
+pub struct JwtCred {
+    pub consumer_id: Id,
+    /// One of HS256 / HS384 / HS512 / RS256.
+    pub algorithm: String,
+    /// HMAC secret (HS*) or RSA public key PEM (RS256).
+    pub secret: String,
 }
 
 /// The result of matching a request against the routing table.

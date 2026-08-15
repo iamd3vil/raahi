@@ -173,18 +173,55 @@ pub async fn delete_plugin(State(s): State<AppState>, Path(id): Path<Id>) -> Api
 fn validate_plugin(spec: &PluginSpec) -> ApiResult<()> {
     match spec.scope {
         PluginScope::Service if spec.service_id.is_none() => {
-            Err(ApiError::BadRequest("service-scoped plugin needs service_id".into()))
+            return Err(ApiError::BadRequest("service-scoped plugin needs service_id".into()));
         }
         PluginScope::Route if spec.route_id.is_none() => {
-            Err(ApiError::BadRequest("route-scoped plugin needs route_id".into()))
+            return Err(ApiError::BadRequest("route-scoped plugin needs route_id".into()));
         }
-        _ => Ok(()),
+        _ => {}
     }
+    // Per-type config sanity (misconfigurations that would silently no-op or black-hole).
+    match spec.plugin_type {
+        PluginType::Redirect => {
+            let loc = spec.config["location"].as_str().unwrap_or("");
+            if !loc.starts_with("http://") && !loc.starts_with("https://") {
+                return Err(ApiError::BadRequest(
+                    "redirect needs a location starting with http:// or https://".into(),
+                ));
+            }
+        }
+        PluginType::HttpLog => {
+            let ep = spec.config["endpoint"].as_str().unwrap_or("");
+            if !ep.starts_with("http://") && !ep.starts_with("https://") {
+                return Err(ApiError::BadRequest(
+                    "http-log needs an endpoint starting with http:// or https://".into(),
+                ));
+            }
+        }
+        PluginType::IpRestriction => {
+            let both_empty = spec.config["allow"].as_array().map_or(true, |a| a.is_empty())
+                && spec.config["deny"].as_array().map_or(true, |a| a.is_empty());
+            if both_empty {
+                return Err(ApiError::BadRequest(
+                    "ip-restriction needs at least one allow or deny entry".into(),
+                ));
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 // ---- consumers + credentials -------------------------------------------------
 pub async fn list_consumers(State(s): State<AppState>) -> ApiResult<Json<Vec<Consumer>>> {
     Ok(Json(s.store.list_consumers().await?))
+}
+
+pub async fn get_consumer(
+    State(s): State<AppState>,
+    Path(id): Path<Id>,
+) -> ApiResult<Json<Consumer>> {
+    s.store.get_consumer(id).await?.map(Json).ok_or(ApiError::NotFound)
 }
 
 pub async fn create_consumer(
@@ -227,8 +264,9 @@ pub async fn create_credential(
     Path(consumer_id): Path<Id>,
     Json(spec): Json<CredentialSpec>,
 ) -> ApiResult<Json<ConsumerCredential>> {
-    // basic-auth secrets are hashed (bcrypt) before storage; key-auth has no secret.
-    let hashed = match spec.credential_type {
+    // basic-auth secrets are hashed (bcrypt) before storage; key-auth has no secret;
+    // jwt stores its verification material as a JSON blob (needed raw to verify).
+    let stored = match spec.credential_type {
         CredentialType::BasicAuth => {
             let pw = spec
                 .secret
@@ -240,10 +278,29 @@ pub async fn create_credential(
             )
         }
         CredentialType::KeyAuth => None,
+        CredentialType::Jwt => {
+            let secret = spec.secret.as_deref().ok_or_else(|| {
+                ApiError::BadRequest(
+                    "jwt credential needs a secret (HMAC secret or RSA public key PEM)".into(),
+                )
+            })?;
+            let algorithm = spec.algorithm.as_deref().unwrap_or("HS256");
+            if !matches!(algorithm, "HS256" | "HS384" | "HS512" | "RS256") {
+                return Err(ApiError::BadRequest(
+                    "jwt algorithm must be one of HS256, HS384, HS512, RS256".into(),
+                ));
+            }
+            if algorithm == "RS256" && !secret.contains("BEGIN") {
+                return Err(ApiError::BadRequest(
+                    "RS256 requires an RSA public key in PEM format".into(),
+                ));
+            }
+            Some(json!({ "algorithm": algorithm, "secret": secret }).to_string())
+        }
     };
     let cred = s
         .store
-        .create_credential(consumer_id, spec.credential_type, &spec.identifier, hashed.as_deref())
+        .create_credential(consumer_id, spec.credential_type, &spec.identifier, stored.as_deref())
         .await?;
     reload(&s).await?;
     Ok(Json(cred))
@@ -346,4 +403,89 @@ pub async fn config_summary(State(s): State<AppState>) -> Json<Value> {
         "consumers": rc.data.consumers.len(),
         "key_credentials": rc.data.key_index.len(),
     }))
+}
+
+/// Live health of every upstream target (active TCP checks + passive marking).
+pub async fn target_health(State(s): State<AppState>) -> Json<Value> {
+    let rc = s.config.load();
+    let mut out = Vec::new();
+    for (&sid, sr) in &rc.services {
+        for b in &sr.backends {
+            out.push(json!({
+                "service_id": sid,
+                "target_id": b.target_id,
+                "host": b.host,
+                "port": b.port,
+                "healthy": b.healthy.load(std::sync::atomic::Ordering::Relaxed),
+            }));
+        }
+    }
+    Json(json!(out))
+}
+
+#[derive(Deserialize)]
+pub struct RouterTestQuery {
+    #[serde(default)]
+    host: String,
+    path: String,
+    #[serde(default = "default_method")]
+    method: String,
+}
+fn default_method() -> String {
+    "GET".into()
+}
+
+/// Dry-run the router: which route/service would this request hit?
+pub async fn router_test(
+    State(s): State<AppState>,
+    Query(q): Query<RouterTestQuery>,
+) -> Json<Value> {
+    let rc = s.config.load();
+    match rc.data.match_route(&q.host, &q.path, &q.method.to_uppercase()) {
+        Some(m) => {
+            let plugins: Vec<&str> = {
+                let mut ordered = rc.data.plugins_for(m.route.id, m.service.id);
+                ordered.sort_by_key(|p| p.ordering);
+                ordered.iter().map(|p| p.plugin_type.as_str()).collect()
+            };
+            Json(json!({
+                "matched": true,
+                "route_id": m.route.id,
+                "route_name": m.route.name,
+                "service_id": m.service.id,
+                "service_name": m.service.name,
+                "matched_prefix": m.matched_prefix,
+                "strip_path": m.route.strip_path,
+                "preserve_host": m.route.preserve_host,
+                "plugins": plugins,
+            }))
+        }
+        None => Json(json!({ "matched": false })),
+    }
+}
+
+/// Export the full configuration as one JSON document (secrets excluded).
+pub async fn export_config(State(s): State<AppState>) -> ApiResult<Json<Value>> {
+    let services = s.store.list_services().await?;
+    let mut services_out = Vec::new();
+    for svc in &services {
+        let targets = s.store.list_targets_for(svc.id).await?;
+        services_out.push(json!({ "service": svc, "targets": targets }));
+    }
+    let consumers = s.store.list_consumers().await?;
+    let mut consumers_out = Vec::new();
+    for c in &consumers {
+        let creds = s.store.list_credentials_for(c.id).await?;
+        consumers_out.push(json!({ "consumer": c, "credentials": creds }));
+    }
+    Ok(Json(json!({
+        "raahi_export_version": 1,
+        "settings": s.store.get_settings().await?,
+        "services": services_out,
+        "routes": s.store.list_routes().await?,
+        "plugins": s.store.list_plugins().await?,
+        "consumers": consumers_out,
+        // key_pem is never serialized; cert_pem is public material.
+        "certificates": s.store.list_certificates().await?,
+    })))
 }

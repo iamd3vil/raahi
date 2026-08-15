@@ -4,6 +4,7 @@
   import type { Consumer, Credential, CredentialType } from '../lib/types';
   import { toast } from '../lib/state.svelte';
   import Drawer from '../lib/components/Drawer.svelte';
+  import EmptyState from '../lib/components/EmptyState.svelte';
 
   let consumers = $state<Consumer[]>([]);
   let credsBy = $state<Record<number, Credential[]>>({});
@@ -11,7 +12,15 @@
   let open = $state(false);
   let editing = $state<Consumer | null>(null);
   let username = $state('');
-  let credForm = $state({ type: 'key-auth' as CredentialType, identifier: '', secret: '' });
+  let groups = $state('');
+  let credForm = $state({
+    type: 'key-auth' as CredentialType,
+    identifier: '',
+    secret: '',
+    algorithm: 'HS256',
+  });
+
+  const csv = (s: string) => s.split(',').map((x) => x.trim()).filter(Boolean);
 
   async function load() {
     loading = true;
@@ -31,23 +40,25 @@
   function openNew() {
     editing = null;
     username = '';
-    credForm = { type: 'key-auth', identifier: '', secret: '' };
+    groups = '';
+    credForm = { type: 'key-auth', identifier: '', secret: '', algorithm: 'HS256' };
     open = true;
   }
   function openEdit(c: Consumer) {
     editing = c;
     username = c.username;
-    credForm = { type: 'key-auth', identifier: '', secret: '' };
+    groups = (c.groups ?? []).join(', ');
+    credForm = { type: 'key-auth', identifier: '', secret: '', algorithm: 'HS256' };
     open = true;
   }
 
   async function save() {
     try {
       if (editing) {
-        await api.updateConsumer(editing.id, { username });
+        await api.updateConsumer(editing.id, { username, groups: csv(groups) });
         toast('Consumer updated', 'ok');
       } else {
-        editing = await api.createConsumer({ username });
+        editing = await api.createConsumer({ username, groups: csv(groups) });
         toast('Consumer created — add credentials below', 'ok');
       }
       await load();
@@ -74,9 +85,10 @@
       await api.createCredential(editing.id, {
         type: credForm.type,
         identifier: credForm.identifier,
-        secret: credForm.type === 'basic-auth' ? credForm.secret : undefined,
+        secret: credForm.type === 'key-auth' ? undefined : credForm.secret,
+        algorithm: credForm.type === 'jwt' ? credForm.algorithm : undefined,
       });
-      credForm = { type: credForm.type, identifier: '', secret: '' };
+      credForm = { type: credForm.type, identifier: '', secret: '', algorithm: credForm.algorithm };
       toast('Credential added', 'ok');
       await load();
     } catch (e) {
@@ -107,16 +119,28 @@
   {#if loading}
     <div class="empty"><span class="spinner"></span></div>
   {:else if consumers.length === 0}
-    <div class="empty">No consumers yet.</div>
+    <EmptyState
+      icon="M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0zM4 21v-2a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v2"
+      title="No consumers yet"
+      description="Consumers are the identities that key-auth and basic-auth plugins authenticate. Create one and attach credentials."
+    >
+      {#snippet action()}
+        <button class="btn btn-primary" onclick={openNew}>+ Create your first consumer</button>
+      {/snippet}
+    </EmptyState>
   {:else}
     <div class="table-wrap">
       <table class="table">
-        <thead><tr><th>Username</th><th>Credentials</th><th></th></tr></thead>
+        <thead><tr><th>Username</th><th>Groups</th><th>Credentials</th><th></th></tr></thead>
         <tbody>
           {#each consumers as c (c.id)}
             {@const creds = credsBy[c.id] ?? []}
             <tr>
               <td><strong>{c.username}</strong></td>
+              <td>
+                {#if !c.groups?.length}<span class="faint">—</span>{/if}
+                {#each c.groups ?? [] as g}<span class="badge">{g}</span>{/each}
+              </td>
               <td>
                 {#if creds.length === 0}<span class="faint">none</span>{/if}
                 {#each creds as cr}<span class="chip">{cr.type}: {cr.identifier}</span>{/each}
@@ -136,8 +160,12 @@
 <Drawer bind:open title={editing ? `Manage ${editing.username}` : 'New consumer'}>
   <div class="field">
     <label for="c-name">Username</label>
+    <input id="c-name" class="input" bind:value={username} placeholder="alice" />
+  </div>
+  <div class="field">
+    <label for="c-groups">Groups <span class="faint">(comma-separated, used by the ACL plugin)</span></label>
     <div class="row">
-      <input id="c-name" class="input" bind:value={username} placeholder="alice" />
+      <input id="c-groups" class="input mono" bind:value={groups} placeholder="team-a, admins" />
       <button class="btn" style="flex:none" onclick={save}>{editing ? 'Save' : 'Create'}</button>
     </div>
   </div>
@@ -162,14 +190,33 @@
       <select class="select" bind:value={credForm.type}>
         <option value="key-auth">key-auth</option>
         <option value="basic-auth">basic-auth</option>
+        <option value="jwt">jwt</option>
       </select>
-      <input class="input" placeholder={credForm.type === 'key-auth' ? 'API key' : 'username'} bind:value={credForm.identifier} />
+      <input class="input" style="min-width:140px"
+        placeholder={credForm.type === 'key-auth' ? 'API key' : credForm.type === 'jwt' ? 'key (iss claim value)' : 'username'}
+        bind:value={credForm.identifier} />
       {#if credForm.type === 'basic-auth'}
         <input class="input" type="password" placeholder="password" bind:value={credForm.secret} />
       {/if}
+      {#if credForm.type === 'jwt'}
+        <select class="select" style="max-width:100px" bind:value={credForm.algorithm}>
+          <option value="HS256">HS256</option>
+          <option value="HS384">HS384</option>
+          <option value="HS512">HS512</option>
+          <option value="RS256">RS256</option>
+        </select>
+      {/if}
       <button class="btn" onclick={addCred}>Add</button>
     </div>
-    <p class="hint">Secrets are hashed (bcrypt) and never returned by the API.</p>
+    {#if credForm.type === 'jwt'}
+      <div class="field" style="margin-top:10px">
+        <label for="jwt-secret">{credForm.algorithm === 'RS256' ? 'RSA public key (PEM)' : 'HMAC secret'}</label>
+        <textarea id="jwt-secret" class="textarea" rows={credForm.algorithm === 'RS256' ? 5 : 2}
+          placeholder={credForm.algorithm === 'RS256' ? '-----BEGIN PUBLIC KEY-----' : 'shared signing secret'}
+          bind:value={credForm.secret}></textarea>
+      </div>
+    {/if}
+    <p class="hint">basic-auth passwords are bcrypt-hashed; secrets are never returned by the API.</p>
   {/if}
 
   {#snippet footer()}

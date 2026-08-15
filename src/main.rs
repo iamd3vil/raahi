@@ -12,7 +12,10 @@ use pingora::prelude::*;
 use pingora::services::background::background_service;
 use raahi_api::ApiService;
 use raahi_core::{RouteSpec, ServiceSpec, TargetSpec};
-use raahi_proxy::{config_handle, sni_tls_settings, CertHandle, CertStore, Metrics, RaahiProxy};
+use raahi_proxy::{
+    config_handle, log_channel, sni_tls_settings, CertHandle, CertStore, HttpLogService, Metrics,
+    RaahiProxy,
+};
 use raahi_store::Store;
 use tracing::{info, warn};
 
@@ -134,9 +137,14 @@ fn main() -> anyhow::Result<()> {
     let mut server = Server::new(None).map_err(map_pingora)?;
     server.bootstrap();
 
+    // http-log delivery channel: the proxy's log phase produces, a background
+    // service batches + POSTs to collectors.
+    let (log_tx, log_rx) = log_channel();
+
     let proxy = RaahiProxy {
         config: config.clone(),
         metrics: metrics.clone(),
+        log_tx,
     };
     let mut proxy_svc = http_proxy_service(&server.configuration, proxy);
     proxy_svc.add_tcp(&http_addr);
@@ -171,6 +179,8 @@ fn main() -> anyhow::Result<()> {
     };
     server.add_service(background_service("admin-api", api));
     info!("admin API on {admin_addr}");
+
+    server.add_service(background_service("http-log", HttpLogService::new(log_rx)));
 
     // Active health checks for upstream targets.
     let health = raahi_proxy::HealthService {

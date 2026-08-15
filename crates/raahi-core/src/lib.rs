@@ -7,7 +7,7 @@ mod matching;
 mod model;
 mod spec;
 
-pub use config::{ProxyConfig, RouteMatch};
+pub use config::{JwtCred, ProxyConfig, RouteMatch};
 pub use matching::{host_matches, path_matches, strip_prefix};
 pub use model::*;
 pub use spec::*;

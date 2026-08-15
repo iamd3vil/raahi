@@ -59,7 +59,7 @@ async fn crud_and_snapshot_roundtrip() {
 
     // Consumer + key-auth credential.
     let consumer = store
-        .create_consumer(&ConsumerSpec { username: "alice".into() })
+        .create_consumer(&ConsumerSpec { username: "alice".into(), groups: vec!["team-a".into()] })
         .await
         .expect("create consumer");
     store

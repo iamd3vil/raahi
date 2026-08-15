@@ -101,17 +101,25 @@ pub struct PluginSpec {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConsumerSpec {
     pub username: String,
+    /// Group names for the `acl` plugin.
+    #[serde(default)]
+    pub groups: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CredentialSpec {
     #[serde(rename = "type")]
     pub credential_type: CredentialType,
-    /// API key (key-auth) or username (basic-auth).
+    /// API key (key-auth), username (basic-auth), or key claim value (jwt).
     pub identifier: String,
-    /// Plaintext password for basic-auth (hashed before storage). Unused for key-auth.
+    /// basic-auth: plaintext password (hashed before storage).
+    /// jwt: HMAC secret (HS*) or RSA public key PEM (RS256).
+    /// key-auth: unused.
     #[serde(default)]
     pub secret: Option<String>,
+    /// jwt only: HS256 (default) / HS384 / HS512 / RS256.
+    #[serde(default)]
+    pub algorithm: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

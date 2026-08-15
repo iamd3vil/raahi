@@ -1,11 +1,15 @@
 <script lang="ts">
-  import type { Route, Service, Target, RequestRecord } from '../types';
+  import type { Route, Service, Target, RequestRecord, TargetHealth } from '../types';
 
   let {
     routes,
     services,
     targets,
-  }: { routes: Route[]; services: Service[]; targets: Target[] } = $props();
+    health = [],
+  }: { routes: Route[]; services: Service[]; targets: Target[]; health?: TargetHealth[] } = $props();
+
+  const healthByTarget = $derived(new Map(health.map((h) => [h.target_id, h.healthy])));
+  const isUp = (t: Target) => t.enabled && (healthByTarget.get(t.id) ?? true);
 
   const COL_R = 80;
   const COL_S = 330;
@@ -58,7 +62,7 @@
       d += ` C ${COL_S + BOX_W / 2 + 80} ${sy}, ${COL_T - BOX_W / 2 - 80} ${ty}, ${COL_T - BOX_W / 2} ${ty}`;
     }
     const color =
-      ev.status >= 500 ? 'var(--err)' : ev.status >= 400 ? 'var(--warn)' : 'var(--teal)';
+      ev.status >= 500 ? 'var(--err)' : ev.status >= 400 ? 'var(--warn)' : 'var(--accent)';
     const id = ++dotId;
     dots.push({ id, d, color });
     if (dots.length > 60) dots.shift();
@@ -115,10 +119,11 @@
       {/each}
 
       <!-- target nodes -->
-      {#each tgtPos as p, i}
+      {#each tgtPos as p (p.t.id)}
         <g transform="translate({COL_T - BOX_W / 2}, {p.y - 14})">
-          <rect width={BOX_W} height="28" rx="9" class="node tgt" class:down={!p.t.enabled} />
-          <circle cx="14" cy="14" r="4" fill={p.t.enabled ? 'var(--ok)' : 'var(--err)'} />
+          <title>{p.t.host}:{p.t.port} — {!p.t.enabled ? 'disabled' : isUp(p.t) ? 'healthy' : 'unhealthy'}</title>
+          <rect width={BOX_W} height="28" rx="9" class="node tgt" class:down={!isUp(p.t)} />
+          <circle cx="14" cy="14" r="4" fill={isUp(p.t) ? 'var(--ok)' : 'var(--err)'} />
           <text x="26" y="18" class="node-label mono-text">{trunc(`${p.t.host}:${p.t.port}`, 14)}</text>
         </g>
       {/each}
@@ -155,7 +160,7 @@
     stroke-width: 1;
   }
   .node.svc {
-    stroke: rgba(124, 92, 255, 0.5);
+    stroke: color-mix(in srgb, var(--accent) 45%, transparent);
   }
   .node.tgt.down {
     opacity: 0.5;
@@ -171,6 +176,6 @@
     font-size: 11px;
   }
   .flow {
-    filter: drop-shadow(0 0 4px currentColor);
+    opacity: 0.9;
   }
 </style>

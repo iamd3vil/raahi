@@ -20,7 +20,8 @@ pub struct RequestRecord {
     pub host: String,
     pub path: String,
     pub status: u16,
-    pub latency_ms: u64,
+    /// Fractional milliseconds (microsecond precision).
+    pub latency_ms: f64,
     pub route_id: Option<Id>,
     pub service_id: Option<Id>,
     pub upstream: Option<String>,
@@ -37,13 +38,34 @@ pub struct MetricsSnapshot {
     pub class_5xx: u64,
     pub no_route: u64,
     pub avg_latency_ms: f64,
+    /// Percentiles over the recent-request window (up to 500 requests).
+    pub p50_latency_ms: f64,
+    pub p95_latency_ms: f64,
+    pub p99_latency_ms: f64,
     pub top_routes: Vec<RouteHit>,
+    pub top_consumers: Vec<ConsumerHit>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct RouteHit {
     pub route_id: Id,
     pub count: u64,
+    /// 4xx + 5xx responses on this route.
+    pub errors: u64,
+    pub avg_latency_ms: f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ConsumerHit {
+    pub consumer: String,
+    pub count: u64,
+}
+
+#[derive(Default)]
+struct RouteStats {
+    count: u64,
+    errors: u64,
+    latency_sum_us: u64,
 }
 
 pub struct Metrics {
@@ -53,9 +75,10 @@ pub struct Metrics {
     class_4xx: AtomicU64,
     class_5xx: AtomicU64,
     no_route: AtomicU64,
-    latency_sum_ms: AtomicU64,
+    latency_sum_us: AtomicU64,
     recent: Mutex<VecDeque<RequestRecord>>,
-    route_hits: Mutex<HashMap<Id, u64>>,
+    route_hits: Mutex<HashMap<Id, RouteStats>>,
+    consumer_hits: Mutex<HashMap<String, u64>>,
     tx: broadcast::Sender<RequestRecord>,
 }
 
@@ -69,9 +92,10 @@ impl Default for Metrics {
             class_4xx: AtomicU64::new(0),
             class_5xx: AtomicU64::new(0),
             no_route: AtomicU64::new(0),
-            latency_sum_ms: AtomicU64::new(0),
+            latency_sum_us: AtomicU64::new(0),
             recent: Mutex::new(VecDeque::with_capacity(RECENT_CAP)),
             route_hits: Mutex::new(HashMap::new()),
+            consumer_hits: Mutex::new(HashMap::new()),
             tx,
         }
     }
@@ -100,12 +124,22 @@ impl Metrics {
         if rec.route_id.is_none() {
             self.no_route.fetch_add(1, Ordering::Relaxed);
         }
-        self.latency_sum_ms
-            .fetch_add(rec.latency_ms, Ordering::Relaxed);
+        self.latency_sum_us
+            .fetch_add((rec.latency_ms * 1000.0) as u64, Ordering::Relaxed);
 
         if let Some(rid) = rec.route_id {
             if let Ok(mut hits) = self.route_hits.lock() {
-                *hits.entry(rid).or_insert(0) += 1;
+                let s = hits.entry(rid).or_default();
+                s.count += 1;
+                if rec.status >= 400 {
+                    s.errors += 1;
+                }
+                s.latency_sum_us += (rec.latency_ms * 1000.0) as u64;
+            }
+        }
+        if let Some(consumer) = &rec.consumer {
+            if let Ok(mut hits) = self.consumer_hits.lock() {
+                *hits.entry(consumer.clone()).or_insert(0) += 1;
             }
         }
         if let Ok(mut recent) = self.recent.lock() {
@@ -127,20 +161,56 @@ impl Metrics {
 
     pub fn snapshot(&self) -> MetricsSnapshot {
         let total = self.total.load(Ordering::Relaxed);
-        let sum = self.latency_sum_ms.load(Ordering::Relaxed);
-        let avg = if total > 0 { sum as f64 / total as f64 } else { 0.0 };
+        let sum_us = self.latency_sum_us.load(Ordering::Relaxed);
+        let avg = if total > 0 { sum_us as f64 / 1000.0 / total as f64 } else { 0.0 };
+
+        // Percentiles over the bounded recent window.
+        let (p50, p95, p99) = self
+            .recent
+            .lock()
+            .map(|r| {
+                let mut lat: Vec<f64> = r.iter().map(|x| x.latency_ms).collect();
+                if lat.is_empty() {
+                    return (0.0, 0.0, 0.0);
+                }
+                lat.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                let at = |p: f64| lat[((lat.len() - 1) as f64 * p) as usize];
+                (at(0.50), at(0.95), at(0.99))
+            })
+            .unwrap_or((0.0, 0.0, 0.0));
 
         let mut top_routes: Vec<RouteHit> = self
             .route_hits
             .lock()
             .map(|h| {
                 h.iter()
-                    .map(|(&route_id, &count)| RouteHit { route_id, count })
+                    .map(|(&route_id, s)| RouteHit {
+                        route_id,
+                        count: s.count,
+                        errors: s.errors,
+                        avg_latency_ms: if s.count > 0 {
+                            s.latency_sum_us as f64 / 1000.0 / s.count as f64
+                        } else {
+                            0.0
+                        },
+                    })
                     .collect()
             })
             .unwrap_or_default();
         top_routes.sort_by(|a, b| b.count.cmp(&a.count));
         top_routes.truncate(5);
+
+        let mut top_consumers: Vec<ConsumerHit> = self
+            .consumer_hits
+            .lock()
+            .map(|h| {
+                h.iter()
+                    .map(|(c, &count)| ConsumerHit { consumer: c.clone(), count })
+                    .collect()
+            })
+            .unwrap_or_default();
+        top_consumers.sort_by(|a, b| b.count.cmp(&a.count));
+        top_consumers.truncate(5);
 
         MetricsSnapshot {
             total,
@@ -150,7 +220,11 @@ impl Metrics {
             class_5xx: self.class_5xx.load(Ordering::Relaxed),
             no_route: self.no_route.load(Ordering::Relaxed),
             avg_latency_ms: avg,
+            p50_latency_ms: p50,
+            p95_latency_ms: p95,
+            p99_latency_ms: p99,
             top_routes,
+            top_consumers,
         }
     }
 }

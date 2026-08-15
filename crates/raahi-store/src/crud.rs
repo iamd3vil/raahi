@@ -319,8 +319,9 @@ impl Store {
     }
 
     pub async fn create_consumer(&self, c: &ConsumerSpec) -> Result<Consumer, StoreError> {
-        let res = sqlx::query("INSERT INTO consumers (username) VALUES (?)")
+        let res = sqlx::query("INSERT INTO consumers (username, groups) VALUES (?, ?)")
             .bind(&c.username)
+            .bind(serde_json::to_string(&c.groups).unwrap_or_else(|_| "[]".into()))
             .execute(&self.pool)
             .await
             .map_err(map_err)?;
@@ -332,8 +333,9 @@ impl Store {
         id: Id,
         c: &ConsumerSpec,
     ) -> Result<Option<Consumer>, StoreError> {
-        let res = sqlx::query("UPDATE consumers SET username=? WHERE id=?")
+        let res = sqlx::query("UPDATE consumers SET username=?, groups=? WHERE id=?")
             .bind(&c.username)
+            .bind(serde_json::to_string(&c.groups).unwrap_or_else(|_| "[]".into()))
             .bind(id)
             .execute(&self.pool)
             .await

@@ -69,7 +69,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/consumers", get(list_consumers).post(create_consumer))
         .route(
             "/consumers/{id}",
-            get(list_consumers).put(update_consumer).delete(delete_consumer),
+            get(get_consumer).put(update_consumer).delete(delete_consumer),
         )
         .route(
             "/consumers/{id}/credentials",
@@ -82,7 +82,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/metrics", get(metrics))
         .route("/requests", get(requests))
         .route("/events", get(events))
-        .route("/config", get(config_summary));
+        .route("/config", get(config_summary))
+        .route("/health", get(target_health))
+        .route("/router/test", get(router_test))
+        .route("/export", get(export_config));
 
     let mut app = Router::new()
         .route("/healthz", get(healthz))

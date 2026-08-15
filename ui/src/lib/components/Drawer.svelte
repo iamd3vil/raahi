@@ -21,14 +21,11 @@
   }
 </script>
 
+<svelte:window onkeydown={(e) => open && e.key === 'Escape' && close()} />
+
 {#if open}
-  <div
-    class="overlay"
-    onclick={close}
-    onkeydown={(e) => e.key === 'Escape' && close()}
-    role="presentation"
-  >
-    <div class="drawer" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" tabindex="-1">
+  <div class="overlay" onclick={(e) => e.target === e.currentTarget && close()} role="presentation">
+    <div class="drawer" role="dialog" aria-modal="true" tabindex="-1">
       <div class="head">
         <h2>{title}</h2>
         <button class="btn btn-ghost btn-sm" onclick={close} aria-label="Close">✕</button>
@@ -47,8 +44,8 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgba(8, 10, 20, 0.55);
-    backdrop-filter: blur(3px);
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(2px);
     display: flex;
     justify-content: flex-end;
     z-index: 900;

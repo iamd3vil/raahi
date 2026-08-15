@@ -2,6 +2,7 @@
 //! plugin layer, and in-memory metrics. Reads a hot-swappable config snapshot.
 
 mod health;
+mod httplog;
 mod metrics;
 mod plugins;
 mod proxy;
@@ -9,7 +10,8 @@ mod runtime;
 mod tls;
 
 pub use health::HealthService;
-pub use metrics::{Metrics, MetricsSnapshot, RequestRecord, RouteHit};
+pub use httplog::{log_channel, HttpLogService, LogEvent, LogSender};
+pub use metrics::{ConsumerHit, Metrics, MetricsSnapshot, RequestRecord, RouteHit};
 pub use proxy::{Ctx, RaahiProxy};
 pub use runtime::{BackendRt, ConfigHandle, RuntimeConfig, ServiceRuntime};
 pub use tls::{sni_tls_settings, validate_cert, CertHandle, CertStore};

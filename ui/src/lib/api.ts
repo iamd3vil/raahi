@@ -3,15 +3,18 @@
 
 import type {
   Certificate,
+  ConfigSummary,
   Consumer,
   Credential,
   MetricsSnapshot,
   Plugin,
   RequestRecord,
   Route,
+  RouterTestResult,
   Service,
   Settings,
   Target,
+  TargetHealth,
 } from './types';
 
 const BASE = '/api/v1';
@@ -72,8 +75,10 @@ export const api = {
   deleteConsumer: (id: number) => req('DELETE', `/consumers/${id}`),
   listCredentials: (consumerId: number) =>
     req<Credential[]>('GET', `/consumers/${consumerId}/credentials`),
-  createCredential: (consumerId: number, c: { type: string; identifier: string; secret?: string }) =>
-    req<Credential>('POST', `/consumers/${consumerId}/credentials`, c),
+  createCredential: (
+    consumerId: number,
+    c: { type: string; identifier: string; secret?: string; algorithm?: string },
+  ) => req<Credential>('POST', `/consumers/${consumerId}/credentials`, c),
   deleteCredential: (id: number) => req('DELETE', `/credentials/${id}`),
 
   // certificates
@@ -87,4 +92,21 @@ export const api = {
   updateSettings: (s: Partial<Settings>) => req<Settings>('PUT', '/settings', s),
   metrics: () => req<MetricsSnapshot>('GET', '/metrics'),
   requests: (limit = 100) => req<RequestRecord[]>('GET', `/requests?limit=${limit}`),
+  health: () => req<TargetHealth[]>('GET', '/health'),
+  configSummary: () => req<ConfigSummary>('GET', '/config'),
+  exportConfig: () => req<unknown>('GET', '/export'),
+  routerTest: (q: { host: string; path: string; method: string }) =>
+    req<RouterTestResult>(
+      'GET',
+      `/router/test?host=${encodeURIComponent(q.host)}&path=${encodeURIComponent(q.path)}&method=${encodeURIComponent(q.method)}`,
+    ),
 };
+
+/** Human-friendly latency: sub-ms shows µs, otherwise adaptive ms precision. */
+export function fmtLatency(ms: number): string {
+  if (ms <= 0) return '0ms';
+  if (ms < 1) return `${Math.round(ms * 1000)}µs`;
+  if (ms < 10) return `${ms.toFixed(2)}ms`;
+  if (ms < 1000) return `${ms.toFixed(1)}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
+}

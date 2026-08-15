@@ -4,6 +4,7 @@
   import type { Certificate } from '../lib/types';
   import { toast } from '../lib/state.svelte';
   import Drawer from '../lib/components/Drawer.svelte';
+  import EmptyState from '../lib/components/EmptyState.svelte';
 
   let certs = $state<Certificate[]>([]);
   let loading = $state(true);
@@ -59,7 +60,7 @@
 </script>
 
 <div class="head-actions">
-  <p class="muted">TLS certificates for the HTTPS listener (rustls).</p>
+  <p class="muted">TLS certificates for the HTTPS listener, selected per request by SNI.</p>
   <button class="btn btn-primary" onclick={openNew}>+ Add certificate</button>
 </div>
 
@@ -74,7 +75,15 @@
   {#if loading}
     <div class="empty"><span class="spinner"></span></div>
   {:else if certs.length === 0}
-    <div class="empty">No certificates yet.</div>
+    <EmptyState
+      icon="M12 15a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0 0v6l-2-2-2 2-1-7m10 7-2-2-2 2"
+      title="No certificates yet"
+      description="Add a PEM certificate + key to serve HTTPS. Certificates are matched per request by SNI and hot-reload without a restart."
+    >
+      {#snippet action()}
+        <button class="btn btn-primary" onclick={openNew}>+ Add your first certificate</button>
+      {/snippet}
+    </EmptyState>
   {:else}
     <div class="table-wrap">
       <table class="table">
@@ -134,14 +143,5 @@
   }
   .actions {
     text-align: right;
-  }
-  .note {
-    background: var(--aurora-soft);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    padding: 12px 14px;
-    font-size: 13px;
-    color: var(--muted);
-    margin-bottom: 16px;
   }
 </style>

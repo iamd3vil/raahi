@@ -22,13 +22,25 @@ SQLite and atomically swapped into the running proxy with no restart.
 - **Load balancing** across weighted targets: round-robin, weighted, random, consistent-hash (by client IP).
 - **Path & host rewriting** (`strip_path`, `preserve_host`) and `X-Forwarded-*` injection.
 - **Built-in plugins** (native Rust; scoped global / per-service / per-route):
-  - `key-auth` (header or query) and `basic-auth` (bcrypt) with a consumers model
-  - `rate-limit` (fixed window, keyed by IP / consumer / route)
+  - Auth: `key-auth` (header or query), `basic-auth` (bcrypt), and `jwt`
+    (HS256/384/512 + RS256, per-consumer credentials looked up by key claim)
+  - Access: `acl` (consumer-group allow/deny) and `ip-restriction` (CIDR allow/deny)
+  - `rate-limit` (sliding window, keyed by IP / consumer / route, `RateLimit-*`
+    headers, counters survive config reloads)
+  - Traffic: `request-termination` (maintenance mode), `request-size-limit` (413),
+    and `redirect` (301/302/307/308 with path preservation)
   - `cors` (preflight + response headers)
   - `request-transform` / `response-transform` (add / remove headers)
-- **TLS termination** via rustls, **upstream TLS**, and **active + passive health checks**.
-- **Live observability**: request metrics, status breakdown, and an SSE-driven dashboard
-  with a "transit map" visualizing traffic flowing routes → services → targets.
+  - `http-log` (batched JSON delivery of request records to an external collector,
+    off the hot path)
+- **TLS termination** via boringssl with per-SNI certificate selection and live (no-restart)
+  certificate reload, **upstream TLS**, and **active + passive health checks**.
+- **Live observability**: request metrics with latency percentiles (p50/p95/p99, µs precision),
+  status breakdown, an SSE-driven dashboard with a "transit map" visualizing traffic flowing
+  routes → services → targets (health-aware), a filterable live request log, and per-target
+  health via `GET /api/v1/health`.
+- **Operator tooling**: a route tester (`GET /api/v1/router/test`) that dry-runs the router
+  for any method/host/path, and one-click config export (`GET /api/v1/export`, secrets excluded).
 
 ## Workspace layout
 

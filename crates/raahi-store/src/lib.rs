@@ -9,7 +9,7 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use raahi_core::{CredentialType, ProxyConfig, Target};
+use raahi_core::{CredentialType, JwtCred, ProxyConfig, Target};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::SqlitePool;
 
@@ -107,6 +107,7 @@ impl Store {
 
         let mut key_index = HashMap::new();
         let mut basic_index = HashMap::new();
+        let mut jwt_index = HashMap::new();
         for cr in creds {
             match cr.credential_type {
                 CredentialType::KeyAuth => {
@@ -116,6 +117,23 @@ impl Store {
                     if let Some(secret) = cr.secret {
                         basic_index.insert(cr.identifier, (cr.consumer_id, secret));
                     }
+                }
+                CredentialType::Jwt => {
+                    // secret column holds {"algorithm": "...", "secret": "..."}.
+                    let Some(blob) = cr.secret else { continue };
+                    let Ok(v) = serde_json::from_str::<serde_json::Value>(&blob) else {
+                        continue;
+                    };
+                    let algorithm = v["algorithm"].as_str().unwrap_or("HS256").to_string();
+                    let Some(secret) = v["secret"].as_str() else { continue };
+                    jwt_index.insert(
+                        cr.identifier,
+                        JwtCred {
+                            consumer_id: cr.consumer_id,
+                            algorithm,
+                            secret: secret.to_string(),
+                        },
+                    );
                 }
             }
         }
@@ -131,6 +149,7 @@ impl Store {
             consumers,
             key_index,
             basic_index,
+            jwt_index,
             settings,
         })
     }
