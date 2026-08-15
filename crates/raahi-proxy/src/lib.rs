@@ -11,6 +11,7 @@ mod tls;
 
 pub use health::HealthService;
 pub use httplog::{log_channel, HttpLogService, LogEvent, LogSender};
+pub use plugins::{validate_wasm, wat_to_wasm};
 pub use metrics::{ConsumerHit, Metrics, MetricsSnapshot, RequestRecord, RouteHit};
 pub use proxy::{Ctx, RaahiProxy};
 pub use runtime::{BackendRt, ConfigHandle, RuntimeConfig, ServiceRuntime};

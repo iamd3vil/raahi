@@ -14,7 +14,7 @@ use raahi_core::{strip_prefix, Id, Plugin};
 
 use crate::httplog::{LogEvent, LogSender};
 use crate::metrics::{Metrics, RequestRecord};
-use crate::plugins::{type_priority, Action, Effects, ReqInput, ShortResp};
+use crate::plugins::{type_priority, Action, Effects, ReqInput, RespInput, ShortResp};
 use crate::runtime::ConfigHandle;
 
 /// The data-plane service.
@@ -270,6 +270,26 @@ impl ProxyHttp for RaahiProxy {
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
+        // Response phase: plugins that react to the upstream response (wasm modules).
+        if let (Some(rid), Some(sid)) = (ctx.route_id, ctx.service_id) {
+            let rc = self.config.load();
+            if rc.plugins.has_response_phase() {
+                let input_headers = upstream_response.headers.clone();
+                let input = RespInput {
+                    status: upstream_response.status.as_u16(),
+                    headers: &input_headers,
+                };
+                let mut ordered = rc.data.plugins_for(rid, sid);
+                ordered.sort_by_key(|p| (type_priority(p.plugin_type), p.ordering, p.id));
+                let mut effects = Effects::default();
+                for p in &ordered {
+                    rc.plugins.run_response(p, &input, &mut effects);
+                }
+                ctx.resp_remove.extend(effects.resp_remove);
+                ctx.resp_add.extend(effects.resp_add);
+            }
+        }
+
         for k in &ctx.resp_remove {
             upstream_response.remove_header(k.as_str());
         }

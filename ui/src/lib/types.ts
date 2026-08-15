@@ -13,6 +13,7 @@ export type PluginType =
   | 'request-termination'
   | 'redirect'
   | 'cors'
+  | 'wasm'
   | 'request-transform'
   | 'response-transform'
   | 'http-log';
@@ -129,6 +130,14 @@ export interface RouterTestResult {
   plugins?: string[];
 }
 
+export interface WasmModule {
+  id: number;
+  name: string;
+  description: string;
+  size_bytes: number;
+  created_at: string;
+}
+
 export interface ConfigSummary {
   version: number;
   routes: number;
@@ -162,6 +171,7 @@ export const PLUGIN_TYPES: PluginType[] = [
   'request-termination',
   'redirect',
   'cors',
+  'wasm',
   'request-transform',
   'response-transform',
   'http-log',
@@ -178,6 +188,7 @@ export const PLUGIN_LABELS: Record<PluginType, string> = {
   'request-termination': 'Termination',
   redirect: 'Redirect',
   cors: 'CORS',
+  wasm: 'WASM',
   'request-transform': 'Request Transform',
   'response-transform': 'Response Transform',
   'http-log': 'HTTP Log',

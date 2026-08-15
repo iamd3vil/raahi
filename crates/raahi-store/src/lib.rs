@@ -93,6 +93,12 @@ impl Store {
         let consumers = self.list_consumers().await?;
         let creds = self.list_all_credentials().await?;
         let settings = self.get_settings().await?;
+        let wasm_modules = self
+            .list_wasm_modules()
+            .await?
+            .into_iter()
+            .map(|m| (m.name, std::sync::Arc::new(m.wasm)))
+            .collect();
 
         let services = services.into_iter().map(|s| (s.id, s)).collect();
 
@@ -150,6 +156,7 @@ impl Store {
             key_index,
             basic_index,
             jwt_index,
+            wasm_modules,
             settings,
         })
     }

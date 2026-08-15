@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, fmtLatency } from '../lib/api';
+  import { api, eventsUrl, fmtLatency } from '../lib/api';
   import type { MetricsSnapshot, RequestRecord, Route, Service, Target, TargetHealth } from '../lib/types';
   import TransitMap from '../lib/components/TransitMap.svelte';
   import Sparkline from '../lib/components/Sparkline.svelte';
@@ -56,7 +56,7 @@
     refreshMetrics();
     api.requests(30).then((rs) => rs.reverse().forEach(push)).catch(() => {});
 
-    const es = new EventSource('/api/v1/events');
+    const es = new EventSource(eventsUrl());
     es.onmessage = (e) => {
       try {
         const rec: RequestRecord = JSON.parse(e.data);

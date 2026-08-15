@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
 use pingora::server::ShutdownWatch;
@@ -29,6 +30,9 @@ pub struct AppState {
     pub metrics: Arc<Metrics>,
     pub cert_handle: CertHandle,
     pub ui_dir: Option<PathBuf>,
+    /// SHA-256 hex of the admin token; `None` = auth disabled. Swapped live on
+    /// token generate/disable so the middleware never touches the DB.
+    pub admin_hash: Arc<arc_swap::ArcSwap<Option<String>>>,
 }
 
 /// Rebuild the config snapshot from the store and atomically swap it into the proxy.
@@ -48,6 +52,56 @@ pub async fn reload_certs(state: &AppState) -> ApiResult<()> {
         .cert_handle
         .store(CertStore::from_certs(certs, settings.active_certificate_id));
     Ok(())
+}
+
+/// Constant-time-ish equality for two hex digests of equal length.
+fn digest_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// Bearer-token auth for the admin API. Accepts `Authorization: Bearer`,
+/// `X-Admin-Token`, or `?access_token=` (the latter for EventSource/SSE, which
+/// cannot set headers). No-op until a token is generated.
+async fn require_admin(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let Some(expected) = state.admin_hash.load().as_ref().clone() else {
+        return next.run(req).await; // auth disabled
+    };
+
+    let presented: Option<String> = req
+        .headers()
+        .get("authorization")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")))
+        .map(|s| s.trim().to_string())
+        .or_else(|| {
+            req.headers()
+                .get("x-admin-token")
+                .and_then(|h| h.to_str().ok())
+                .map(|s| s.trim().to_string())
+        })
+        .or_else(|| {
+            req.uri().query().and_then(|q| {
+                q.split('&').find_map(|kv| {
+                    kv.strip_prefix("access_token=").map(|v| v.to_string())
+                })
+            })
+        });
+
+    match presented {
+        Some(token) if digest_eq(&handlers::sha256_hex(&token), &expected) => next.run(req).await,
+        _ => (
+            axum::http::StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({ "error": "missing or invalid admin token" })),
+        )
+            .into_response(),
+    }
 }
 
 /// Assemble the full admin router (API under `/api/v1`, optional SPA static serving).
@@ -79,13 +133,22 @@ pub fn build_router(state: AppState) -> Router {
         .route("/certificates", get(list_certificates).post(create_certificate))
         .route("/certificates/{id}", axum::routing::delete(delete_certificate))
         .route("/settings", get(get_settings).put(update_settings))
+        .route("/wasm-modules", get(list_wasm_modules).post(create_wasm_module))
+        .route("/wasm-modules/{id}", axum::routing::delete(delete_wasm_module))
         .route("/metrics", get(metrics))
         .route("/requests", get(requests))
         .route("/events", get(events))
         .route("/config", get(config_summary))
         .route("/health", get(target_health))
         .route("/router/test", get(router_test))
-        .route("/export", get(export_config));
+        .route("/export", get(export_config))
+        .route(
+            "/admin/token",
+            axum::routing::post(create_admin_token).delete(delete_admin_token),
+        )
+        .layer(axum::middleware::from_fn_with_state(state.clone(), require_admin))
+        // Status stays open so the UI can tell whether to show the login screen.
+        .route("/admin/status", get(admin_status));
 
     let mut app = Router::new()
         .route("/healthz", get(healthz))
@@ -131,12 +194,21 @@ impl BackgroundService for ApiService {
             self.config.store(snap);
         }
 
+        // Load the admin-token hash once; the middleware reads the live handle.
+        let admin_hash = Arc::new(arc_swap::ArcSwap::from_pointee(
+            store.get_admin_token_hash().await.ok().flatten(),
+        ));
+        if admin_hash.load().is_some() {
+            info!("admin API auth: enabled (bearer token)");
+        }
+
         let state = AppState {
             store,
             config: self.config.clone(),
             metrics: self.metrics.clone(),
             cert_handle: self.cert_handle.clone(),
             ui_dir: self.ui_dir.clone(),
+            admin_hash,
         };
         let app = build_router(state);
 

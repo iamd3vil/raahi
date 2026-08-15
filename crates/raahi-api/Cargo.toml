@@ -9,6 +9,7 @@ description = "Raahi control plane: admin REST API + UI serving as a Pingora bac
 raahi-core = { workspace = true }
 raahi-store = { workspace = true }
 raahi-proxy = { workspace = true }
+arc-swap = { workspace = true }
 pingora = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
@@ -23,3 +24,6 @@ futures = { workspace = true }
 tokio-stream = { version = "0.1", features = ["sync"] }
 mime_guess = { workspace = true }
 bcrypt = { workspace = true }
+base64 = "0.22"
+sha2 = "0.10"
+rand = "0.8"

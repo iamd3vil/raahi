@@ -137,6 +137,7 @@ pub enum PluginType {
     RequestTermination,
     Redirect,
     Cors,
+    Wasm,
     RequestTransform,
     ResponseTransform,
     HttpLog,
@@ -155,6 +156,7 @@ impl PluginType {
             PluginType::RequestTermination => "request-termination",
             PluginType::Redirect => "redirect",
             PluginType::Cors => "cors",
+            PluginType::Wasm => "wasm",
             PluginType::RequestTransform => "request-transform",
             PluginType::ResponseTransform => "response-transform",
             PluginType::HttpLog => "http-log",
@@ -172,6 +174,7 @@ impl PluginType {
             "request-termination" => PluginType::RequestTermination,
             "redirect" => PluginType::Redirect,
             "cors" => PluginType::Cors,
+            "wasm" => PluginType::Wasm,
             "request-transform" => PluginType::RequestTransform,
             "response-transform" => PluginType::ResponseTransform,
             "http-log" => PluginType::HttpLog,
@@ -279,6 +282,18 @@ pub struct ConsumerCredential {
     /// Secret hash. Never serialized back out to API clients (the API redacts it).
     #[serde(skip_serializing)]
     pub secret: Option<String>,
+}
+
+/// A user-supplied WASM plugin module. `wasm` bytes are held in memory by the proxy
+/// snapshot and never serialized to API clients (listings expose size only).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WasmModule {
+    pub id: Id,
+    pub name: String,
+    pub description: String,
+    #[serde(skip_serializing)]
+    pub wasm: Vec<u8>,
+    pub created_at: DateTime<Utc>,
 }
 
 /// A TLS certificate + private key (PEM). The private key is a secret and is never

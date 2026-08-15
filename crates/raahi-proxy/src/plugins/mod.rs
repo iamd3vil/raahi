@@ -9,12 +9,15 @@ mod cors;
 mod ratelimit;
 mod traffic;
 mod transform;
+mod wasm;
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use raahi_core::{Id, Plugin, PluginType, ProxyConfig};
 use serde::Deserialize;
+
+pub use wasm::{validate_wasm, wat_to_wasm};
 
 /// Read-only request inputs handed to each plugin during the request phase.
 pub struct ReqInput<'a> {
@@ -25,6 +28,12 @@ pub struct ReqInput<'a> {
     pub client_ip: Option<&'a str>,
     pub headers: &'a http::HeaderMap,
     pub route_id: Id,
+}
+
+/// Read-only response inputs handed to plugins during the response phase.
+pub struct RespInput<'a> {
+    pub status: u16,
+    pub headers: &'a http::HeaderMap,
 }
 
 /// Side effects a plugin accumulates: an authenticated consumer, request-header
@@ -98,6 +107,7 @@ enum PluginInstance {
     RequestTermination(traffic::TerminationCfg),
     Redirect(traffic::RedirectCfg),
     Cors(cors::CorsCfg),
+    Wasm(wasm::WasmPlugin),
     RequestTransform(transform::TransformCfg),
     ResponseTransform(transform::TransformCfg),
     HttpLog(HttpLogCfg),
@@ -113,7 +123,8 @@ pub struct PluginSet {
 }
 
 impl PluginSet {
-    pub fn build(plugins: &[Plugin], prev: Option<&PluginSet>) -> Self {
+    pub fn build(data: &ProxyConfig, prev: Option<&PluginSet>) -> Self {
+        let plugins = &data.plugins;
         let mut instances = HashMap::new();
         let mut configs = HashMap::new();
         for p in plugins {
@@ -164,6 +175,11 @@ impl PluginSet {
                 PluginType::Cors => {
                     PluginInstance::Cors(serde_json::from_value(cfg()).unwrap_or_default())
                 }
+                PluginType::Wasm => {
+                    let wcfg: wasm::WasmCfg = serde_json::from_value(cfg()).unwrap_or_default();
+                    let bytes = data.wasm_modules.get(&wcfg.module);
+                    PluginInstance::Wasm(wasm::WasmPlugin::new(wcfg, bytes))
+                }
                 PluginType::RequestTransform => PluginInstance::RequestTransform(
                     serde_json::from_value(cfg()).unwrap_or_default(),
                 ),
@@ -202,6 +218,7 @@ impl PluginSet {
             PluginInstance::RequestTermination(c) => traffic::terminate(c),
             PluginInstance::Redirect(c) => traffic::redirect(c, input),
             PluginInstance::Cors(c) => cors::cors(c, input, effects),
+            PluginInstance::Wasm(w) => w.on_request(input, effects),
             PluginInstance::RequestTransform(c) => {
                 c.apply_request(effects);
                 Action::Continue
@@ -212,6 +229,20 @@ impl PluginSet {
             }
             PluginInstance::HttpLog(_) => Action::Continue, // consumed in the log phase
         }
+    }
+
+    /// Execute one plugin's response-phase logic (currently only wasm modules).
+    pub fn run_response(&self, plugin: &Plugin, input: &RespInput, effects: &mut Effects) {
+        if let Some(PluginInstance::Wasm(w)) = self.instances.get(&plugin.id) {
+            w.on_response(input, effects);
+        }
+    }
+
+    /// Whether any compiled plugin participates in the response phase.
+    pub fn has_response_phase(&self) -> bool {
+        self.instances
+            .values()
+            .any(|i| matches!(i, PluginInstance::Wasm(_)))
     }
 
     /// The compiled http-log config for a plugin id, if that plugin is an http-log.
@@ -234,11 +265,12 @@ pub fn type_priority(t: PluginType) -> u8 {
         PluginType::Acl => 3,
         PluginType::RequestSizeLimit => 4,
         PluginType::RateLimit => 5,
-        PluginType::RequestTermination => 6,
-        PluginType::Redirect => 7,
-        PluginType::RequestTransform => 8,
-        PluginType::ResponseTransform => 9,
-        PluginType::HttpLog => 10,
+        PluginType::Wasm => 6,
+        PluginType::RequestTermination => 7,
+        PluginType::Redirect => 8,
+        PluginType::RequestTransform => 9,
+        PluginType::ResponseTransform => 10,
+        PluginType::HttpLog => 11,
     }
 }
 

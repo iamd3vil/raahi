@@ -3,6 +3,7 @@
 
 use chrono::Utc;
 use raahi_core::*;
+use sqlx::Row;
 
 use crate::rows::*;
 use crate::{Store, StoreError};
@@ -409,6 +410,67 @@ impl Store {
             .execute(&self.pool)
             .await?;
         Ok(res.rows_affected() > 0)
+    }
+
+    // ---- wasm modules -----------------------------------------------------------
+    pub async fn list_wasm_modules(&self) -> Result<Vec<WasmModule>, StoreError> {
+        let rows = sqlx::query("SELECT * FROM wasm_modules ORDER BY id")
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.iter().map(map_wasm_module).collect())
+    }
+
+    pub async fn get_wasm_module(&self, id: Id) -> Result<Option<WasmModule>, StoreError> {
+        let row = sqlx::query("SELECT * FROM wasm_modules WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.as_ref().map(map_wasm_module))
+    }
+
+    /// `wasm` must already be validated (compiled) by the caller.
+    pub async fn create_wasm_module(
+        &self,
+        name: &str,
+        description: &str,
+        wasm: &[u8],
+    ) -> Result<WasmModule, StoreError> {
+        let res = sqlx::query(
+            "INSERT INTO wasm_modules (name, description, wasm, created_at) \
+             VALUES (?,?,?,datetime('now'))",
+        )
+        .bind(name)
+        .bind(description)
+        .bind(wasm)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(self.get_wasm_module(res.last_insert_rowid()).await?.unwrap())
+    }
+
+    pub async fn delete_wasm_module(&self, id: Id) -> Result<bool, StoreError> {
+        let res = sqlx::query("DELETE FROM wasm_modules WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    // ---- admin token ------------------------------------------------------------
+    /// SHA-256 hex of the admin API token; `None` = auth disabled.
+    pub async fn get_admin_token_hash(&self) -> Result<Option<String>, StoreError> {
+        let row = sqlx::query("SELECT admin_token_hash FROM settings WHERE id = 1")
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.and_then(|r| r.get("admin_token_hash")))
+    }
+
+    pub async fn set_admin_token_hash(&self, hash: Option<&str>) -> Result<(), StoreError> {
+        sqlx::query("UPDATE settings SET admin_token_hash = ? WHERE id = 1")
+            .bind(hash)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     // ---- certificates ---------------------------------------------------------

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { ui, applyTheme, toggleTheme, go, type View } from './lib/state.svelte';
+  import { adminToken, api, setAdminToken } from './lib/api';
   import Toasts from './lib/components/Toasts.svelte';
   import Dashboard from './pages/Dashboard.svelte';
   import Requests from './pages/Requests.svelte';
@@ -54,8 +55,32 @@
     settings: { title: 'Settings', sub: 'Listeners, defaults, and configuration export' },
   };
 
+  let tokenInput = $state('');
+  let loginError = $state('');
+
+  async function login() {
+    loginError = '';
+    setAdminToken(tokenInput.trim());
+    try {
+      await api.getSettings(); // any authed call validates the token
+      ui.authRequired = false;
+      tokenInput = '';
+      location.reload(); // restart live streams with the token attached
+    } catch {
+      setAdminToken(null);
+      loginError = 'Invalid token';
+    }
+  }
+
   onMount(() => {
     applyTheme();
+    // Show the login screen when auth is on and we don't hold a valid token.
+    api
+      .adminStatus()
+      .then((s) => {
+        if (s.auth_enabled && !adminToken()) ui.authRequired = true;
+      })
+      .catch(() => {});
     const onHash = () => {
       const v = location.hash.slice(1) as View;
       if (v && titles[v]) ui.view = v;
@@ -159,9 +184,69 @@
   </main>
 </div>
 
+{#if ui.authRequired}
+  <div class="login-overlay">
+    <div class="login-card">
+      <div class="brand" style="padding:0 0 6px">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 19V9a4 4 0 0 1 4-4h1" />
+            <circle cx="17" cy="7" r="2.4" fill="#ffffff" stroke="none" />
+            <path d="M13 19h2a4 4 0 0 0 4-4v-3" />
+          </svg>
+        </div>
+        <div class="brand-name">Raahi</div>
+      </div>
+      <h2>Admin token required</h2>
+      <p class="muted">This admin API is protected. Paste your bearer token to continue.</p>
+      <input
+        class="input mono"
+        type="password"
+        placeholder="admin token"
+        bind:value={tokenInput}
+        onkeydown={(e) => e.key === 'Enter' && login()}
+      />
+      {#if loginError}<div class="login-err">{loginError}</div>{/if}
+      <button class="btn btn-primary" style="width:100%" onclick={login} disabled={!tokenInput.trim()}>
+        Unlock
+      </button>
+    </div>
+  </div>
+{/if}
+
 <Toasts />
 
 <style>
+  .login-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 950;
+  }
+  .login-card {
+    width: min(380px, calc(100% - 32px));
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .login-card h2 {
+    font-size: 16px;
+  }
+  .login-card p {
+    margin: 0;
+    font-size: 13px;
+  }
+  .login-err {
+    color: var(--err);
+    font-size: 13px;
+  }
   .shell {
     display: grid;
     grid-template-columns: 232px 1fr;

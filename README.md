@@ -33,6 +33,15 @@ SQLite and atomically swapped into the running proxy with no restart.
   - `request-transform` / `response-transform` (add / remove headers)
   - `http-log` (batched JSON delivery of request records to an external collector,
     off the hot path)
+- **WASM user plugins**: upload `.wasm` binaries or WAT source and run them per
+  route/service/globally, sandboxed and fuel-metered (wasmi). Modules implement a
+  JSON-over-memory ABI (`raahi_alloc`, `on_request`, `on_response`) and can
+  short-circuit requests, mutate headers, and react to upstream responses. Multiple
+  wasm plugins stack on one route. See `examples/wasm/`.
+- **Admin API auth**: optional bearer-token protection for the admin API (SHA-256
+  token, generated/rotated from the UI or `POST /api/v1/admin/token`; SSE uses
+  `?access_token=`). Lockout recovery: clear `settings.admin_token_hash` in SQLite
+  and restart.
 - **TLS termination** via boringssl with per-SNI certificate selection and live (no-restart)
   certificate reload, **upstream TLS**, and **active + passive health checks**.
 - **Live observability**: request metrics with latency percentiles (p50/p95/p99, µs precision),

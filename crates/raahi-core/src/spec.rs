@@ -122,6 +122,18 @@ pub struct CredentialSpec {
     pub algorithm: Option<String>,
 }
 
+/// Upload spec for a WASM module: either raw wasm (base64) or WAT source text.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WasmModuleSpec {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub wasm_base64: Option<String>,
+    #[serde(default)]
+    pub wat: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CertificateSpec {
     pub name: String,

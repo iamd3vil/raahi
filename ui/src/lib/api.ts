@@ -15,9 +15,28 @@ import type {
   Settings,
   Target,
   TargetHealth,
+  WasmModule,
 } from './types';
 
+import { ui } from './state.svelte';
+
 const BASE = '/api/v1';
+const TOKEN_KEY = 'raahi-admin-token';
+
+export function adminToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function setAdminToken(token: string | null) {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+/** SSE endpoint URL; EventSource can't set headers, so the token rides as a query param. */
+export function eventsUrl(): string {
+  const t = adminToken();
+  return `${BASE}/events${t ? `?access_token=${encodeURIComponent(t)}` : ''}`;
+}
 
 export class ApiError extends Error {
   status: number;
@@ -28,14 +47,22 @@ export class ApiError extends Error {
 }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const token = adminToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
   const res = await fetch(BASE + path, {
     method,
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
+    if (res.status === 401 && !path.startsWith('/admin/')) {
+      ui.authRequired = true;
+    }
     const msg = (data && (data.error as string)) || `${res.status} ${res.statusText}`;
     throw new ApiError(res.status, msg);
   }
@@ -95,6 +122,17 @@ export const api = {
   health: () => req<TargetHealth[]>('GET', '/health'),
   configSummary: () => req<ConfigSummary>('GET', '/config'),
   exportConfig: () => req<unknown>('GET', '/export'),
+
+  // wasm modules
+  listWasmModules: () => req<WasmModule[]>('GET', '/wasm-modules'),
+  createWasmModule: (m: { name: string; description?: string; wasm_base64?: string; wat?: string }) =>
+    req<WasmModule>('POST', '/wasm-modules', m),
+  deleteWasmModule: (id: number) => req('DELETE', `/wasm-modules/${id}`),
+
+  // admin auth
+  adminStatus: () => req<{ auth_enabled: boolean }>('GET', '/admin/status'),
+  createAdminToken: () => req<{ token: string }>('POST', '/admin/token'),
+  deleteAdminToken: () => req('DELETE', '/admin/token'),
   routerTest: (q: { host: string; path: string; method: string }) =>
     req<RouterTestResult>(
       'GET',

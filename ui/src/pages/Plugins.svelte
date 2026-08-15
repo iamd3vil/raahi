@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api, ApiError } from '../lib/api';
-  import type { Plugin, PluginScope, PluginType, Route, Service } from '../lib/types';
+  import type { Plugin, PluginScope, PluginType, Route, Service, WasmModule } from '../lib/types';
   import { PLUGIN_TYPES, PLUGIN_LABELS } from '../lib/types';
   import { toast } from '../lib/state.svelte';
   import Drawer from '../lib/components/Drawer.svelte';
@@ -10,10 +10,59 @@
   let plugins = $state<Plugin[]>([]);
   let services = $state<Service[]>([]);
   let routes = $state<Route[]>([]);
+  let modules = $state<WasmModule[]>([]);
   let loading = $state(true);
   let open = $state(false);
   let editing = $state<Plugin | null>(null);
   let rawMode = $state(false);
+
+  // wasm module uploader
+  let modOpen = $state(false);
+  let modForm = $state({ name: '', description: '', wat: '', wasm_base64: '', fileName: '' });
+
+  function onModuleFile(e: Event) {
+    const file = (e.currentTarget as HTMLInputElement).files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const b64 = (reader.result as string).split(',')[1] ?? '';
+      modForm.wasm_base64 = b64;
+      modForm.fileName = file.name;
+      if (!modForm.name) modForm.name = file.name.replace(/\.wasm$/, '');
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function uploadModule() {
+    try {
+      await api.createWasmModule({
+        name: modForm.name,
+        description: modForm.description,
+        wasm_base64: modForm.wasm_base64 || undefined,
+        wat: modForm.wat || undefined,
+      });
+      toast('Module uploaded', 'ok');
+      modOpen = false;
+      await load();
+    } catch (e) {
+      toast((e as ApiError).message, 'err');
+    }
+  }
+
+  async function delModule(m: WasmModule) {
+    if (!confirm(`Delete module "${m.name}"?`)) return;
+    try {
+      await api.deleteWasmModule(m.id);
+      toast('Module deleted', 'ok');
+      await load();
+    } catch (e) {
+      toast((e as ApiError).message, 'err');
+    }
+  }
+
+  function fmtSize(b: number) {
+    return b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`;
+  }
 
   const DEFAULTS: Record<PluginType, Record<string, unknown>> = {
     'key-auth': { key_names: ['apikey', 'x-api-key'], hide_credentials: false },
@@ -29,6 +78,7 @@
     'request-transform': { add: {}, remove: [] },
     'response-transform': { add: {}, remove: [] },
     'http-log': { endpoint: '', headers: {}, batch_max: 50, flush_interval_ms: 2000 },
+    wasm: { module: '', config: {}, fuel: 100000000 },
   };
 
   const HELP: Record<PluginType, string> = {
@@ -45,6 +95,7 @@
     'request-transform': 'Adds or removes request headers before proxying upstream.',
     'response-transform': 'Adds or removes response headers before returning downstream.',
     'http-log': 'POSTs request records (JSON batches) to an external collector, off the hot path.',
+    wasm: 'Runs an uploaded WASM module on requests and responses (sandboxed, fuel-metered). Multiple wasm plugins stack.',
   };
 
   let form = $state({
@@ -71,6 +122,10 @@
     if (type === 'request-transform' || type === 'response-transform') {
       addRows = Object.entries((d.add as Record<string, string>) ?? {}).map(([k, v]) => ({ k, v: String(v) }));
       if (addRows.length === 0) addRows = [{ k: '', v: '' }];
+    }
+    if (type === 'wasm') {
+      cfg.config_json = JSON.stringify(d.config ?? {}, null, 2);
+      if (!cfg.module && modules.length) cfg.module = modules[0].name;
     }
   }
 
@@ -125,6 +180,17 @@
         batch_max: Number(cfg.batch_max) || 50,
         flush_interval_ms: Number(cfg.flush_interval_ms) || 2000,
       };
+    if (t === 'wasm') {
+      let moduleConfig: unknown = cfg.config ?? {};
+      if (typeof cfg.config_json === 'string') {
+        try {
+          moduleConfig = cfg.config_json.trim() ? JSON.parse(cfg.config_json) : {};
+        } catch {
+          /* keep prior config on parse failure; save() surfaces JSON errors in raw mode */
+        }
+      }
+      return { module: String(cfg.module ?? ''), config: moduleConfig, fuel: Number(cfg.fuel) || 100000000 };
+    }
     if (t === 'cors')
       return {
         allow_origins: csv(String(cfg.allow_origins_csv ?? list(cfg.allow_origins))),
@@ -162,10 +228,11 @@
   async function load() {
     loading = true;
     try {
-      [plugins, services, routes] = await Promise.all([
+      [plugins, services, routes, modules] = await Promise.all([
         api.listPlugins(),
         api.listServices(),
         api.listRoutes(),
+        api.listWasmModules(),
       ]);
     } catch (e) {
       toast((e as ApiError).message, 'err');
@@ -311,6 +378,8 @@
       }
       case 'http-log':
         return `→ ${c.endpoint || '—'}`;
+      case 'wasm':
+        return `module: ${c.module || '—'}`;
     }
   }
 
@@ -536,6 +605,27 @@
         <input id="hl-flush" class="input" type="number" min="500" bind:value={cfg.flush_interval_ms} />
       </div>
     </div>
+  {:else if form.type === 'wasm'}
+    {#if modules.length === 0}
+      <div class="note">No WASM modules uploaded yet — add one from the "WASM modules" panel first.</div>
+    {:else}
+      <div class="row">
+        <div class="field">
+          <label for="w-module">Module</label>
+          <select id="w-module" class="select" bind:value={cfg.module}>
+            {#each modules as m}<option value={m.name}>{m.name}</option>{/each}
+          </select>
+        </div>
+        <div class="field">
+          <label for="w-fuel">Fuel limit <span class="faint">(instructions/call)</span></label>
+          <input id="w-fuel" class="input" type="number" min="1000" bind:value={cfg.fuel} />
+        </div>
+      </div>
+      <div class="field">
+        <label for="w-config">Module config <span class="faint">(JSON, passed on every call)</span></label>
+        <textarea id="w-config" class="textarea" rows="5" bind:value={cfg.config_json}></textarea>
+      </div>
+    {/if}
   {:else if form.type === 'rate-limit'}
     <div class="row">
       <div class="field">
@@ -619,6 +709,71 @@
   {#snippet footer()}
     <button class="btn btn-ghost" onclick={() => (open = false)}>Cancel</button>
     <button class="btn btn-primary" onclick={save}>{editing ? 'Save' : 'Create'}</button>
+  {/snippet}
+</Drawer>
+
+<div class="panel" style="margin-top:16px">
+  <div class="panel-head">
+    <h2>WASM modules</h2>
+    <button class="btn btn-sm" onclick={() => { modForm = { name: '', description: '', wat: '', wasm_base64: '', fileName: '' }; modOpen = true; }}>
+      + Upload module
+    </button>
+  </div>
+  {#if modules.length === 0}
+    <div class="empty">
+      No modules yet. Upload a <span class="code">.wasm</span> binary or WAT source implementing
+      <span class="code">raahi_alloc</span> and <span class="code">on_request</span> / <span class="code">on_response</span>.
+    </div>
+  {:else}
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Name</th><th>Description</th><th>Size</th><th></th></tr></thead>
+        <tbody>
+          {#each modules as m (m.id)}
+            <tr>
+              <td><span class="mono">{m.name}</span></td>
+              <td class="muted">{m.description || '—'}</td>
+              <td class="mono faint">{fmtSize(m.size_bytes)}</td>
+              <td class="actions">
+                <button class="btn btn-sm btn-danger" onclick={() => delModule(m)}>Delete</button>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {/if}
+</div>
+
+<Drawer bind:open={modOpen} title="Upload WASM module">
+  <div class="field">
+    <label for="m-name">Name</label>
+    <input id="m-name" class="input mono" bind:value={modForm.name} placeholder="my-filter" />
+  </div>
+  <div class="field">
+    <label for="m-desc">Description <span class="faint">(optional)</span></label>
+    <input id="m-desc" class="input" bind:value={modForm.description} />
+  </div>
+  <div class="field">
+    <label for="m-file">.wasm binary</label>
+    <input id="m-file" class="input" type="file" accept=".wasm" onchange={onModuleFile} />
+    {#if modForm.fileName}<span class="hint">Loaded {modForm.fileName}</span>{/if}
+  </div>
+  <div class="field">
+    <label for="m-wat">…or WAT source text</label>
+    <textarea id="m-wat" class="textarea" rows="9" bind:value={modForm.wat} placeholder={'(module\n  (memory (export "memory") 1)\n  …)'}></textarea>
+    <span class="hint">
+      ABI: export <span class="code">memory</span>, <span class="code">raahi_alloc(size)→ptr</span>, and
+      <span class="code">on_request(ptr,len)→i64</span> / <span class="code">on_response(ptr,len)→i64</span>
+      exchanging JSON; the return packs <span class="code">(out_ptr &lt;&lt; 32) | out_len</span>.
+    </span>
+  </div>
+
+  {#snippet footer()}
+    <button class="btn btn-ghost" onclick={() => (modOpen = false)}>Cancel</button>
+    <button class="btn btn-primary" onclick={uploadModule} disabled={!modForm.name || (!modForm.wat && !modForm.wasm_base64)}>
+      Upload
+    </button>
   {/snippet}
 </Drawer>
 

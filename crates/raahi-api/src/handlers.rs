@@ -146,6 +146,7 @@ pub async fn create_plugin(
     Json(spec): Json<PluginSpec>,
 ) -> ApiResult<Json<Plugin>> {
     validate_plugin(&spec)?;
+    ensure_wasm_module_exists(&s, &spec).await?;
     let p = s.store.create_plugin(&spec).await?;
     reload(&s).await?;
     Ok(Json(p))
@@ -157,9 +158,23 @@ pub async fn update_plugin(
     Json(spec): Json<PluginSpec>,
 ) -> ApiResult<Json<Plugin>> {
     validate_plugin(&spec)?;
+    ensure_wasm_module_exists(&s, &spec).await?;
     let p = s.store.update_plugin(id, &spec).await?.ok_or(ApiError::NotFound)?;
     reload(&s).await?;
     Ok(Json(p))
+}
+
+/// A `wasm` plugin must reference an uploaded module by name.
+async fn ensure_wasm_module_exists(s: &AppState, spec: &PluginSpec) -> ApiResult<()> {
+    if spec.plugin_type != PluginType::Wasm {
+        return Ok(());
+    }
+    let name = spec.config["module"].as_str().unwrap_or("");
+    let exists = s.store.list_wasm_modules().await?.iter().any(|m| m.name == name);
+    if !exists {
+        return Err(ApiError::BadRequest(format!("wasm module '{name}' not found")));
+    }
+    Ok(())
 }
 
 pub async fn delete_plugin(State(s): State<AppState>, Path(id): Path<Id>) -> ApiResult<Json<Value>> {
@@ -204,6 +219,13 @@ fn validate_plugin(spec: &PluginSpec) -> ApiResult<()> {
             if both_empty {
                 return Err(ApiError::BadRequest(
                     "ip-restriction needs at least one allow or deny entry".into(),
+                ));
+            }
+        }
+        PluginType::Wasm => {
+            if spec.config["module"].as_str().unwrap_or("").is_empty() {
+                return Err(ApiError::BadRequest(
+                    "wasm plugin needs a module name (upload one under WASM modules)".into(),
                 ));
             }
         }
@@ -314,6 +336,81 @@ pub async fn delete_credential(State(s): State<AppState>, Path(id): Path<Id>) ->
     Ok(Json(json!({ "deleted": true })))
 }
 
+// ---- wasm modules --------------------------------------------------------------
+pub async fn list_wasm_modules(State(s): State<AppState>) -> ApiResult<Json<Value>> {
+    let mods = s.store.list_wasm_modules().await?;
+    Ok(Json(json!(mods
+        .iter()
+        .map(|m| json!({
+            "id": m.id,
+            "name": m.name,
+            "description": m.description,
+            "size_bytes": m.wasm.len(),
+            "created_at": m.created_at,
+        }))
+        .collect::<Vec<_>>())))
+}
+
+pub async fn create_wasm_module(
+    State(s): State<AppState>,
+    Json(spec): Json<WasmModuleSpec>,
+) -> ApiResult<Json<Value>> {
+    if spec.name.trim().is_empty() {
+        return Err(ApiError::BadRequest("module needs a name".into()));
+    }
+    // Accept raw wasm (base64) or WAT source text.
+    let bytes = match (&spec.wasm_base64, &spec.wat) {
+        (Some(b64), _) if !b64.trim().is_empty() => {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD
+                .decode(b64.trim())
+                .map_err(|e| ApiError::BadRequest(format!("invalid base64: {e}")))?
+        }
+        (_, Some(wat)) if !wat.trim().is_empty() => {
+            raahi_proxy::wat_to_wasm(wat).map_err(ApiError::BadRequest)?
+        }
+        _ => {
+            return Err(ApiError::BadRequest(
+                "provide the module as wasm_base64 or wat".into(),
+            ))
+        }
+    };
+    // Compile-check + ABI check before storing.
+    raahi_proxy::validate_wasm(&bytes).map_err(ApiError::BadRequest)?;
+    let m = s
+        .store
+        .create_wasm_module(spec.name.trim(), &spec.description, &bytes)
+        .await?;
+    reload(&s).await?;
+    Ok(Json(json!({
+        "id": m.id, "name": m.name, "description": m.description,
+        "size_bytes": m.wasm.len(), "created_at": m.created_at,
+    })))
+}
+
+pub async fn delete_wasm_module(
+    State(s): State<AppState>,
+    Path(id): Path<Id>,
+) -> ApiResult<Json<Value>> {
+    // Refuse while any wasm plugin references this module by name.
+    if let Some(m) = s.store.get_wasm_module(id).await? {
+        let in_use = s.store.list_plugins().await?.into_iter().any(|p| {
+            p.plugin_type == PluginType::Wasm && p.config["module"].as_str() == Some(&m.name)
+        });
+        if in_use {
+            return Err(ApiError::BadRequest(format!(
+                "module '{}' is referenced by a wasm plugin; delete that plugin first",
+                m.name
+            )));
+        }
+    }
+    if !s.store.delete_wasm_module(id).await? {
+        return Err(ApiError::NotFound);
+    }
+    reload(&s).await?;
+    Ok(Json(json!({ "deleted": true })))
+}
+
 // ---- certificates ------------------------------------------------------------
 pub async fn list_certificates(State(s): State<AppState>) -> ApiResult<Json<Vec<Certificate>>> {
     // key_pem is skipped in serialization.
@@ -354,6 +451,43 @@ pub async fn update_settings(
     // The default certificate (active_certificate_id) may have changed — swap it live.
     reload_certs(&s).await?;
     Ok(Json(settings))
+}
+
+// ---- admin auth ----------------------------------------------------------------
+
+/// SHA-256 hex digest (admin tokens are high-entropy, so a fast hash is fine).
+pub(crate) fn sha256_hex(data: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(data.as_bytes());
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Whether admin auth is enabled (used by the UI before login; unauthenticated).
+pub async fn admin_status(State(s): State<AppState>) -> Json<Value> {
+    Json(json!({ "auth_enabled": s.admin_hash.load().is_some() }))
+}
+
+/// Generate (or rotate) the admin token. The plaintext is returned exactly once.
+pub async fn create_admin_token(State(s): State<AppState>) -> ApiResult<Json<Value>> {
+    use rand::RngCore;
+    let mut bytes = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let hash = sha256_hex(&token);
+    s.store.set_admin_token_hash(Some(&hash)).await?;
+    s.admin_hash.store(std::sync::Arc::new(Some(hash)));
+    Ok(Json(json!({
+        "token": token,
+        "note": "Store this token now — it is not retrievable later.",
+    })))
+}
+
+/// Disable admin auth (open the API again; loopback binding still applies).
+pub async fn delete_admin_token(State(s): State<AppState>) -> ApiResult<Json<Value>> {
+    s.store.set_admin_token_hash(None).await?;
+    s.admin_hash.store(std::sync::Arc::new(None));
+    Ok(Json(json!({ "auth_enabled": false })))
 }
 
 // ---- observability -----------------------------------------------------------

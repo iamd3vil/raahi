@@ -27,6 +27,8 @@ pub struct ProxyConfig {
     pub basic_index: HashMap<String, (Id, String)>,
     /// jwt: key claim value (e.g. `iss`) -> verification material.
     pub jwt_index: HashMap<String, JwtCred>,
+    /// WASM plugin modules by name (bytes shared with compiled instances).
+    pub wasm_modules: HashMap<String, std::sync::Arc<Vec<u8>>>,
     pub settings: Settings,
 }
 
@@ -117,12 +119,14 @@ impl ProxyConfig {
     /// Plugins that apply to a matched route, ordered for execution.
     ///
     /// Resolution: a route-scoped plugin overrides a service-scoped one of the same
-    /// type, which overrides a global one. Within the resolved set, sort by
-    /// `ordering` then `id`.
+    /// type, which overrides a global one — except `wasm` plugins, which all apply
+    /// (users can stack several custom plugins on one route). Within the resolved
+    /// set, sort by `ordering` then `id`.
     pub fn plugins_for(&self, route_id: Id, service_id: Id) -> Vec<&Plugin> {
         use std::collections::HashMap as Map;
         // Best plugin per type, by scope precedence (route > service > global).
         let mut chosen: Map<PluginType, &Plugin> = Map::new();
+        let mut wasm: Vec<&Plugin> = Vec::new();
         let rank = |p: &Plugin| match p.scope {
             PluginScope::Route => 3,
             PluginScope::Service => 2,
@@ -140,6 +144,10 @@ impl ProxyConfig {
             if !applies {
                 continue;
             }
+            if p.plugin_type == PluginType::Wasm {
+                wasm.push(p);
+                continue;
+            }
             chosen
                 .entry(p.plugin_type)
                 .and_modify(|cur| {
@@ -150,6 +158,7 @@ impl ProxyConfig {
                 .or_insert(p);
         }
         let mut out: Vec<&Plugin> = chosen.into_values().collect();
+        out.extend(wasm);
         out.sort_by_key(|p| (p.ordering, p.id));
         out
     }

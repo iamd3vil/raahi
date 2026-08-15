@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, ApiError } from '../lib/api';
+  import { api, ApiError, setAdminToken } from '../lib/api';
   import type { Certificate, ConfigSummary, LbAlgorithm, Settings } from '../lib/types';
   import { toast } from '../lib/state.svelte';
 
@@ -9,6 +9,51 @@
   let summary = $state<ConfigSummary | null>(null);
   let loading = $state(true);
   let exporting = $state(false);
+  let authEnabled = $state(false);
+  let freshToken = $state('');
+
+  async function loadAuth() {
+    try {
+      authEnabled = (await api.adminStatus()).auth_enabled;
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function generateToken() {
+    if (
+      authEnabled &&
+      !confirm('Rotate the admin token? The old token stops working immediately.')
+    )
+      return;
+    try {
+      const r = await api.createAdminToken();
+      freshToken = r.token;
+      setAdminToken(r.token); // keep this browser session working
+      await loadAuth();
+      toast('Admin token generated', 'ok');
+    } catch (e) {
+      toast((e as ApiError).message, 'err');
+    }
+  }
+
+  async function disableAuth() {
+    if (!confirm('Disable admin API auth? Anyone who can reach the admin port gets full access.')) return;
+    try {
+      await api.deleteAdminToken();
+      setAdminToken(null);
+      freshToken = '';
+      await loadAuth();
+      toast('Admin auth disabled', 'ok');
+    } catch (e) {
+      toast((e as ApiError).message, 'err');
+    }
+  }
+
+  function copyToken() {
+    navigator.clipboard?.writeText(freshToken);
+    toast('Token copied', 'ok');
+  }
 
   let form = $state({
     proxy_http_addr: '',
@@ -75,7 +120,10 @@
     }
   }
 
-  onMount(load);
+  onMount(() => {
+    load();
+    loadAuth();
+  });
 </script>
 
 {#if loading}
@@ -148,6 +196,36 @@
       </div>
 
       <div class="panel" style="margin-top:16px">
+        <div class="panel-head">
+          <h2>Admin access</h2>
+          <span class="badge {authEnabled ? 'ok' : 'warn'}">{authEnabled ? 'protected' : 'open'}</span>
+        </div>
+        <p class="muted" style="margin:0 0 12px">
+          {#if authEnabled}
+            The admin API requires a bearer token. Rotate it any time — the old token stops working immediately.
+          {:else}
+            The admin API is unauthenticated (loopback binding is the only protection). Generate a token to require
+            <span class="code">Authorization: Bearer …</span> on every request.
+          {/if}
+        </p>
+        {#if freshToken}
+          <div class="token-box">
+            <div class="hint" style="margin-bottom:6px">Your new token — store it now, it is not retrievable later:</div>
+            <div class="token-row">
+              <code class="code token">{freshToken}</code>
+              <button class="btn btn-sm" onclick={copyToken}>Copy</button>
+            </div>
+          </div>
+        {/if}
+        <div class="flex" style="gap:8px">
+          <button class="btn" onclick={generateToken}>{authEnabled ? 'Rotate token' : 'Generate token'}</button>
+          {#if authEnabled}
+            <button class="btn btn-danger" onclick={disableAuth}>Disable auth</button>
+          {/if}
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:16px">
         <div class="panel-head"><h2>Backup</h2></div>
         <p class="muted" style="margin:0 0 12px">
           Download the full configuration — services, targets, routes, plugins, consumers, certificates, and
@@ -195,6 +273,22 @@
     color: var(--faint);
     text-transform: uppercase;
     letter-spacing: 0.05em;
+  }
+  .token-box {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+  .token-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .token {
+    word-break: break-all;
+    flex: 1;
   }
   @media (max-width: 980px) {
     .cols {

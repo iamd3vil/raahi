@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, fmtLatency } from '../lib/api';
+  import { api, eventsUrl, fmtLatency } from '../lib/api';
   import type { RequestRecord, Route, Service } from '../lib/types';
   import Drawer from '../lib/components/Drawer.svelte';
   import EmptyState from '../lib/components/EmptyState.svelte';
@@ -72,7 +72,7 @@
       .catch(() => {})
       .finally(() => (loading = false));
 
-    const es = new EventSource('/api/v1/events');
+    const es = new EventSource(eventsUrl());
     es.onmessage = (e) => {
       if (paused) return;
       try {

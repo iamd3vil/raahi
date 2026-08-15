@@ -98,6 +98,16 @@ pub fn map_credential(r: &SqliteRow) -> ConsumerCredential {
     }
 }
 
+pub fn map_wasm_module(r: &SqliteRow) -> WasmModule {
+    WasmModule {
+        id: r.get("id"),
+        name: r.get("name"),
+        description: r.get("description"),
+        wasm: r.get("wasm"),
+        created_at: parse_dt(&r.get::<String, _>("created_at")),
+    }
+}
+
 pub fn map_certificate(r: &SqliteRow) -> Certificate {
     Certificate {
         id: r.get("id"),

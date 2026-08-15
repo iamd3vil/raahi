@@ -16,6 +16,8 @@ export const ui = $state({
   theme: stored === 'light' ? 'light' : 'dark',
   view: (typeof location !== 'undefined' && location.hash.slice(1)) || 'dashboard',
   connected: false,
+  /// Admin auth is enabled and we have no (valid) token: show the login screen.
+  authRequired: false,
 });
 
 export function applyTheme() {

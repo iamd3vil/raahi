@@ -20,3 +20,5 @@ http = "1"
 bytes = "1"
 jsonwebtoken = "9"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+wasmi = "0.40"
+wat = "1"
