@@ -30,6 +30,7 @@ export interface Service {
   retries: number;
   lb_algorithm: LbAlgorithm;
   tls_sni: string | null;
+  health_path: string | null;
   created_at: string;
   updated_at: string;
 }

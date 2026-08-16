@@ -180,6 +180,7 @@ mod tests {
             retries: 0,
             lb_algorithm: LbAlgorithm::RoundRobin,
             tls_sni: None,
+            health_path: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

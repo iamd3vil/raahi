@@ -67,6 +67,7 @@ async fn seed(store: &Store) -> anyhow::Result<()> {
             retries: 1,
             lb_algorithm: raahi_core::LbAlgorithm::RoundRobin,
             tls_sni: None,
+            health_path: None,
         })
         .await?;
     for port in [9001u16, 9002] {

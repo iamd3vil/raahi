@@ -42,8 +42,8 @@ impl Store {
         let now = Utc::now().to_rfc3339();
         let res = sqlx::query(
             "INSERT INTO services (name, protocol, connect_timeout_ms, read_timeout_ms, \
-             write_timeout_ms, retries, lb_algorithm, tls_sni, created_at, updated_at) \
-             VALUES (?,?,?,?,?,?,?,?,?,?)",
+             write_timeout_ms, retries, lb_algorithm, tls_sni, health_path, created_at, updated_at) \
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(&s.name)
         .bind(s.protocol.as_str())
@@ -53,6 +53,7 @@ impl Store {
         .bind(s.retries as i64)
         .bind(s.lb_algorithm.as_str())
         .bind(&s.tls_sni)
+        .bind(&s.health_path)
         .bind(&now)
         .bind(&now)
         .execute(&self.pool)
@@ -69,7 +70,7 @@ impl Store {
         let now = Utc::now().to_rfc3339();
         let res = sqlx::query(
             "UPDATE services SET name=?, protocol=?, connect_timeout_ms=?, read_timeout_ms=?, \
-             write_timeout_ms=?, retries=?, lb_algorithm=?, tls_sni=?, updated_at=? WHERE id=?",
+             write_timeout_ms=?, retries=?, lb_algorithm=?, tls_sni=?, health_path=?, updated_at=? WHERE id=?",
         )
         .bind(&s.name)
         .bind(s.protocol.as_str())
@@ -79,6 +80,7 @@ impl Store {
         .bind(s.retries as i64)
         .bind(s.lb_algorithm.as_str())
         .bind(&s.tls_sni)
+        .bind(&s.health_path)
         .bind(&now)
         .bind(id)
         .execute(&self.pool)

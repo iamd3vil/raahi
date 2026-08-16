@@ -135,8 +135,8 @@ impl Store {
             let s = &is.service;
             let res = sqlx::query(
                 "INSERT INTO services (name, protocol, connect_timeout_ms, read_timeout_ms, \
-                 write_timeout_ms, retries, lb_algorithm, tls_sni, created_at, updated_at) \
-                 VALUES (?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))",
+                 write_timeout_ms, retries, lb_algorithm, tls_sni, health_path, created_at, updated_at) \
+                 VALUES (?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))",
             )
             .bind(&s.name)
             .bind(s.protocol.as_str())
@@ -146,6 +146,7 @@ impl Store {
             .bind(s.retries as i64)
             .bind(s.lb_algorithm.as_str())
             .bind(&s.tls_sni)
+            .bind(&s.health_path)
             .execute(&mut *tx)
             .await?;
             let new_id = res.last_insert_rowid();

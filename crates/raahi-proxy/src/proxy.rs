@@ -220,6 +220,30 @@ impl ProxyHttp for RaahiProxy {
         Ok(Box::new(peer))
     }
 
+    /// Passive circuit breaking: a failed connect ejects the backend immediately;
+    /// the active health checker recovers it once probes pass again.
+    fn fail_to_connect(
+        &self,
+        _session: &mut Session,
+        peer: &HttpPeer,
+        ctx: &mut Self::CTX,
+        e: Box<Error>,
+    ) -> Box<Error> {
+        if let (Some(sid), Some(addr)) = (ctx.service_id, ctx.upstream_addr.as_deref()) {
+            let rc = self.config.load();
+            if let Some(sr) = rc.services.get(&sid) {
+                for b in &sr.backends {
+                    if format!("{}:{}", b.host, b.port) == addr
+                        && b.healthy.swap(false, std::sync::atomic::Ordering::Relaxed)
+                    {
+                        tracing::warn!("health: {addr} marked down (connect failed: {peer})");
+                    }
+                }
+            }
+        }
+        e
+    }
+
     async fn upstream_request_filter(
         &self,
         _session: &mut Session,

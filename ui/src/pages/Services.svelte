@@ -34,6 +34,7 @@
     write_timeout_ms: 60000,
     retries: 1,
     tls_sni: '',
+    health_path: '',
   });
   let tForm = $state({ host: '', port: 80, weight: 100 });
 
@@ -63,6 +64,7 @@
       write_timeout_ms: 60000,
       retries: 1,
       tls_sni: '',
+      health_path: '',
     };
     open = true;
   }
@@ -78,12 +80,17 @@
       write_timeout_ms: s.write_timeout_ms,
       retries: s.retries,
       tls_sni: s.tls_sni ?? '',
+      health_path: s.health_path ?? '',
     };
     open = true;
   }
 
   async function save() {
-    const payload = { ...form, tls_sni: form.tls_sni || null };
+    const payload = {
+      ...form,
+      tls_sni: form.tls_sni || null,
+      health_path: form.health_path.trim() || null,
+    };
     try {
       if (editing) {
         const s = await api.updateService(editing.id, payload);
@@ -249,6 +256,14 @@
       <label for="svc-sni">TLS SNI (https upstreams)</label>
       <input id="svc-sni" class="input" bind:value={form.tls_sni} placeholder="api.internal" />
     </div>
+  </div>
+  <div class="field">
+    <label for="svc-health">Health check path <span class="faint">(optional)</span></label>
+    <input id="svc-health" class="input mono" bind:value={form.health_path} placeholder="/healthz" />
+    <span class="hint">
+      HTTP GET every 5s per target; healthy = 2xx/3xx, ejected after 2 consecutive failures.
+      Blank = TCP connect check. Plaintext HTTP — leave blank for TLS upstreams.
+    </span>
   </div>
 
   {#if editing}

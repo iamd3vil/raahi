@@ -27,6 +27,7 @@ async fn crud_and_snapshot_roundtrip() {
             retries: 1,
             lb_algorithm: LbAlgorithm::RoundRobin,
             tls_sni: None,
+            health_path: None,
         })
         .await
         .expect("create service");
@@ -109,6 +110,7 @@ async fn crud_and_snapshot_roundtrip() {
                 retries: 2,
                 lb_algorithm: LbAlgorithm::Weighted,
                 tls_sni: Some("api.internal".into()),
+                health_path: Some("/healthz".into()),
             },
         )
         .await
@@ -140,6 +142,7 @@ async fn unique_violation_maps_to_conflict() {
         retries: 0,
         lb_algorithm: LbAlgorithm::RoundRobin,
         tls_sni: None,
+        health_path: None,
     };
     store.create_service(&spec).await.unwrap();
     let err = store.create_service(&spec).await.unwrap_err();

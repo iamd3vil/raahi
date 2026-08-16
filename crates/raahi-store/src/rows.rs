@@ -32,6 +32,7 @@ pub fn map_service(r: &SqliteRow) -> Service {
         lb_algorithm: LbAlgorithm::from_str(&r.get::<String, _>("lb_algorithm"))
             .unwrap_or_default(),
         tls_sni: r.get("tls_sni"),
+        health_path: r.get("health_path"),
         created_at: parse_dt(&r.get::<String, _>("created_at")),
         updated_at: parse_dt(&r.get::<String, _>("updated_at")),
     }

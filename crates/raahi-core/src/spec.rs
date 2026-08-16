@@ -49,6 +49,9 @@ pub struct ServiceSpec {
     pub lb_algorithm: LbAlgorithm,
     #[serde(default)]
     pub tls_sni: Option<String>,
+    /// Optional HTTP health-check path (e.g. `/healthz`); unset = TCP check.
+    #[serde(default)]
+    pub health_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

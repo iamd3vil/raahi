@@ -87,6 +87,10 @@ pub struct Service {
     /// SNI to present to the upstream when `protocol = https`. Falls back to the
     /// target host when unset.
     pub tls_sni: Option<String>,
+    /// Active health check: GET this path on each target (healthy = 2xx/3xx).
+    /// `None` = plain TCP-connect check. Checks are plaintext HTTP/1.1.
+    #[serde(default)]
+    pub health_path: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
