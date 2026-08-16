@@ -2,6 +2,8 @@
 //! admin API and the in-memory representation used by the proxy. The store maps
 //! SQLite rows to and from these.
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -120,11 +122,27 @@ pub struct Route {
     pub paths: Vec<String>,
     /// Uppercase HTTP methods. Empty = match any method.
     pub methods: Vec<String>,
+    /// Header conditions: every entry must match a request header. Names are
+    /// case-insensitive, values exact; `"*"` means "present with any value".
+    /// Empty = no constraint.
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    /// Weighted traffic splits across services (canary). Non-empty overrides
+    /// `service_id` by smooth weighted round-robin; empty = single service.
+    #[serde(default)]
+    pub splits: Vec<RouteSplit>,
     /// Strip the matched path prefix before forwarding upstream.
     pub strip_path: bool,
     /// Forward the original `Host` header instead of the upstream's host.
     pub preserve_host: bool,
     pub enabled: bool,
+}
+
+/// One entry of a [`Route`]'s weighted traffic split.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouteSplit {
+    pub service_id: Id,
+    pub weight: u32,
 }
 
 /// The kind of a [`Plugin`]. Built-in (native Rust) for this phase; WASM later.

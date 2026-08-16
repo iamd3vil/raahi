@@ -52,6 +52,8 @@ export interface Route {
   hosts: string[];
   paths: string[];
   methods: string[];
+  headers: Record<string, string>;
+  splits: { service_id: number; weight: number }[];
   strip_path: boolean;
   preserve_host: boolean;
   enabled: boolean;
@@ -129,6 +131,7 @@ export interface RouterTestResult {
   strip_path?: boolean;
   preserve_host?: boolean;
   plugins?: string[];
+  splits?: { service_id: number; service_name: string; weight: number }[];
 }
 
 export interface WasmModule {

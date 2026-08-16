@@ -86,6 +86,8 @@ async fn seed(store: &Store) -> anyhow::Result<()> {
             hosts: vec![],
             paths: vec!["/".into()],
             methods: vec![],
+            headers: Default::default(),
+            splits: vec![],
             strip_path: false,
             preserve_host: false,
             enabled: true,
@@ -146,6 +148,7 @@ fn main() -> anyhow::Result<()> {
         config: config.clone(),
         metrics: metrics.clone(),
         log_tx,
+        split_counter: Default::default(),
     };
     let mut proxy_svc = http_proxy_service(&server.configuration, proxy);
     proxy_svc.add_tcp(&http_addr);

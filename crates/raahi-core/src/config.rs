@@ -53,12 +53,21 @@ pub struct RouteMatch<'a> {
 }
 
 impl ProxyConfig {
-    /// Find the best route for `(host, path, method)`.
+    /// Find the best route for `(host, path, method)` plus header conditions.
     ///
-    /// Selection: among enabled routes whose host + method + some path prefix match,
-    /// pick the highest `priority`; ties are broken by the longest matched path
-    /// prefix, then by lowest route id for determinism.
-    pub fn match_route(&self, host: &str, path: &str, method: &str) -> Option<RouteMatch<'_>> {
+    /// `header` looks up a request header by name (implementations must treat the
+    /// name case-insensitively) — a closure so this crate stays free of http deps.
+    ///
+    /// Selection: among enabled routes whose host + method + headers + some path
+    /// prefix match, pick the highest `priority`; ties are broken by the longest
+    /// matched path prefix, then by lowest route id for determinism.
+    pub fn match_route(
+        &self,
+        host: &str,
+        path: &str,
+        method: &str,
+        header: &dyn Fn(&str) -> Option<String>,
+    ) -> Option<RouteMatch<'_>> {
         let method = method.to_ascii_uppercase();
         let mut best: Option<(i32, usize, Id, RouteMatch)> = None;
 
@@ -72,6 +81,12 @@ impl ProxyConfig {
             if !route.methods.is_empty()
                 && !route.methods.iter().any(|m| m.eq_ignore_ascii_case(&method))
             {
+                continue;
+            }
+            // Every header condition must match ("*" = present with any value).
+            if !route.headers.iter().all(|(name, want)| {
+                header(name).is_some_and(|got| want == "*" || got == *want)
+            }) {
                 continue;
             }
 
@@ -195,10 +210,26 @@ mod tests {
             hosts: hosts.iter().map(|s| s.to_string()).collect(),
             paths: paths.iter().map(|s| s.to_string()).collect(),
             methods: vec![],
+            headers: Default::default(),
+            splits: vec![],
             strip_path: false,
             preserve_host: false,
             enabled: true,
         }
+    }
+
+    /// Header lookup over a static list, case-insensitive like a real header map.
+    fn hdrs(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        move |name: &str| {
+            pairs
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                .map(|(_, v)| v.to_string())
+        }
+    }
+
+    fn no_hdrs(_: &str) -> Option<String> {
+        None
     }
 
     fn cfg(routes: Vec<Route>, services: Vec<Service>) -> ProxyConfig {
@@ -218,7 +249,7 @@ mod tests {
             ],
             vec![svc(1)],
         );
-        let m = c.match_route("h", "/api/v2/users", "GET").unwrap();
+        let m = c.match_route("h", "/api/v2/users", "GET", &no_hdrs).unwrap();
         assert_eq!(m.route.id, 2);
         assert_eq!(m.matched_prefix, "/api/v2");
     }
@@ -232,7 +263,7 @@ mod tests {
             ],
             vec![svc(1)],
         );
-        let m = c.match_route("h", "/api/v2/users", "GET").unwrap();
+        let m = c.match_route("h", "/api/v2/users", "GET", &no_hdrs).unwrap();
         assert_eq!(m.route.id, 1);
     }
 
@@ -242,8 +273,8 @@ mod tests {
             vec![route(1, 1, 0, &["api.example.com"], &[])],
             vec![svc(1)],
         );
-        assert!(c.match_route("api.example.com", "/x", "GET").is_some());
-        assert!(c.match_route("other.com", "/x", "GET").is_none());
+        assert!(c.match_route("api.example.com", "/x", "GET", &no_hdrs).is_some());
+        assert!(c.match_route("other.com", "/x", "GET", &no_hdrs).is_none());
     }
 
     #[test]
@@ -251,13 +282,44 @@ mod tests {
         let mut r = route(1, 1, 0, &[], &["/"]);
         r.methods = vec!["POST".into()];
         let c = cfg(vec![r], vec![svc(1)]);
-        assert!(c.match_route("h", "/x", "POST").is_some());
-        assert!(c.match_route("h", "/x", "get").is_none());
+        assert!(c.match_route("h", "/x", "POST", &no_hdrs).is_some());
+        assert!(c.match_route("h", "/x", "get", &no_hdrs).is_none());
     }
 
     #[test]
     fn no_match_returns_none() {
         let c = cfg(vec![route(1, 1, 0, &[], &["/api"])], vec![svc(1)]);
-        assert!(c.match_route("h", "/nope", "GET").is_none());
+        assert!(c.match_route("h", "/nope", "GET", &no_hdrs).is_none());
+    }
+
+    #[test]
+    fn header_constraint_exact_value() {
+        let mut r = route(1, 1, 0, &[], &["/"]);
+        r.headers = [("x-version".to_string(), "beta".to_string())].into();
+        let c = cfg(vec![r], vec![svc(1)]);
+        assert!(c.match_route("h", "/x", "GET", &hdrs(&[("x-version", "beta")])).is_some());
+        // Wrong value or absent header: no match.
+        assert!(c.match_route("h", "/x", "GET", &hdrs(&[("x-version", "stable")])).is_none());
+        assert!(c.match_route("h", "/x", "GET", &no_hdrs).is_none());
+    }
+
+    #[test]
+    fn header_constraint_presence_wildcard() {
+        let mut r = route(1, 1, 0, &[], &["/"]);
+        r.headers = [("x-debug".to_string(), "*".to_string())].into();
+        let c = cfg(vec![r], vec![svc(1)]);
+        assert!(c.match_route("h", "/x", "GET", &hdrs(&[("x-debug", "anything")])).is_some());
+        assert!(c.match_route("h", "/x", "GET", &no_hdrs).is_none());
+    }
+
+    #[test]
+    fn header_name_is_case_insensitive() {
+        let mut r = route(1, 1, 0, &[], &["/"]);
+        r.headers = [("X-Version".to_string(), "beta".to_string())].into();
+        let c = cfg(vec![r], vec![svc(1)]);
+        // The lookup (like a real header map) resolves names case-insensitively.
+        assert!(c.match_route("h", "/x", "GET", &hdrs(&[("x-version", "beta")])).is_some());
+        // Values stay exact.
+        assert!(c.match_route("h", "/x", "GET", &hdrs(&[("x-version", "BETA")])).is_none());
     }
 }

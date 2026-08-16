@@ -9,7 +9,7 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use raahi_core::{CredentialType, ImportDoc, JwtCred, ProxyConfig, Target};
+use raahi_core::{CredentialType, ImportDoc, JwtCred, ProxyConfig, RouteSplit, Target};
 use serde::Serialize;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::SqlitePool;
@@ -175,9 +175,21 @@ impl Store {
                 report.skipped.push(format!("route '{}': unknown service {}", r.name, r.service_id));
                 continue;
             };
+            // Remap split service ids; entries pointing at services that didn't make
+            // it into this import are dropped, not fatal.
+            let mut splits: Vec<RouteSplit> = Vec::new();
+            for sp in &r.splits {
+                match svc_map.get(&sp.service_id) {
+                    Some(&new) => splits.push(RouteSplit { service_id: new, weight: sp.weight }),
+                    None => report.skipped.push(format!(
+                        "route '{}': split references unknown service {}",
+                        r.name, sp.service_id
+                    )),
+                }
+            }
             let res = sqlx::query(
                 "INSERT INTO routes (name, service_id, priority, hosts, paths, methods, \
-                 strip_path, preserve_host, enabled) VALUES (?,?,?,?,?,?,?,?,?)",
+                 headers, splits, strip_path, preserve_host, enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             )
             .bind(&r.name)
             .bind(sid)
@@ -185,6 +197,8 @@ impl Store {
             .bind(serde_json::to_string(&r.hosts).unwrap_or_default())
             .bind(serde_json::to_string(&r.paths).unwrap_or_default())
             .bind(serde_json::to_string(&r.methods).unwrap_or_default())
+            .bind(serde_json::to_string(&r.headers).unwrap_or_default())
+            .bind(serde_json::to_string(&splits).unwrap_or_default())
             .bind(r.strip_path as i64)
             .bind(r.preserve_host as i64)
             .bind(r.enabled as i64)

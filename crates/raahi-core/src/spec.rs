@@ -2,6 +2,8 @@
 //! the entities (no `id`, no server-managed timestamps), deserialized directly from
 //! API request bodies and consumed by the store. Updates are full replacements (PUT).
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::model::*;
@@ -76,6 +78,12 @@ pub struct RouteSpec {
     pub paths: Vec<String>,
     #[serde(default)]
     pub methods: Vec<String>,
+    /// Header conditions (name -> exact value, `"*"` = any value).
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    /// Weighted traffic splits; non-empty overrides `service_id`.
+    #[serde(default)]
+    pub splits: Vec<RouteSplit>,
     #[serde(default)]
     pub strip_path: bool,
     #[serde(default)]

@@ -136,10 +136,10 @@ export const api = {
   adminStatus: () => req<{ auth_enabled: boolean }>('GET', '/admin/status'),
   createAdminToken: () => req<{ token: string }>('POST', '/admin/token'),
   deleteAdminToken: () => req('DELETE', '/admin/token'),
-  routerTest: (q: { host: string; path: string; method: string }) =>
+  routerTest: (q: { host: string; path: string; method: string; headers?: string }) =>
     req<RouterTestResult>(
       'GET',
-      `/router/test?host=${encodeURIComponent(q.host)}&path=${encodeURIComponent(q.path)}&method=${encodeURIComponent(q.method)}`,
+      `/router/test?host=${encodeURIComponent(q.host)}&path=${encodeURIComponent(q.path)}&method=${encodeURIComponent(q.method)}${q.headers ? `&headers=${encodeURIComponent(q.headers)}` : ''}`,
     ),
 };
 

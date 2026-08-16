@@ -109,6 +109,7 @@ pub async fn create_route(
     State(s): State<AppState>,
     Json(spec): Json<RouteSpec>,
 ) -> ApiResult<Json<Route>> {
+    ensure_split_services_exist(&s, &spec).await?;
     let r = s.store.create_route(&spec).await?;
     reload(&s).await?;
     Ok(Json(r))
@@ -119,9 +120,30 @@ pub async fn update_route(
     Path(id): Path<Id>,
     Json(spec): Json<RouteSpec>,
 ) -> ApiResult<Json<Route>> {
+    ensure_split_services_exist(&s, &spec).await?;
     let r = s.store.update_route(id, &spec).await?.ok_or(ApiError::NotFound)?;
     reload(&s).await?;
     Ok(Json(r))
+}
+
+/// Every traffic-split entry must reference an existing service with weight >= 1.
+async fn ensure_split_services_exist(s: &AppState, spec: &RouteSpec) -> ApiResult<()> {
+    if spec.splits.is_empty() {
+        return Ok(());
+    }
+    let services = s.store.list_services().await?;
+    for sp in &spec.splits {
+        if sp.weight < 1 {
+            return Err(ApiError::BadRequest("split weights must be >= 1".into()));
+        }
+        if !services.iter().any(|svc| svc.id == sp.service_id) {
+            return Err(ApiError::BadRequest(format!(
+                "split service {} not found",
+                sp.service_id
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub async fn delete_route(State(s): State<AppState>, Path(id): Path<Id>) -> ApiResult<Json<Value>> {
@@ -685,6 +707,9 @@ pub struct RouterTestQuery {
     path: String,
     #[serde(default = "default_method")]
     method: String,
+    /// Request headers as `Name:value,Name2:value2`.
+    #[serde(default)]
+    headers: String,
 }
 fn default_method() -> String {
     "GET".into()
@@ -695,15 +720,29 @@ pub async fn router_test(
     State(s): State<AppState>,
     Query(q): Query<RouterTestQuery>,
 ) -> Json<Value> {
+    let hdrs: Vec<(String, String)> = q
+        .headers
+        .split(',')
+        .filter_map(|kv| {
+            let (k, v) = kv.split_once(':')?;
+            Some((k.trim().to_string(), v.trim().to_string()))
+        })
+        .filter(|(k, _)| !k.is_empty())
+        .collect();
+    let header = |name: &str| {
+        hdrs.iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.clone())
+    };
     let rc = s.config.load();
-    match rc.data.match_route(&q.host, &q.path, &q.method.to_uppercase()) {
+    match rc.data.match_route(&q.host, &q.path, &q.method.to_uppercase(), &header) {
         Some(m) => {
             let plugins: Vec<&str> = {
                 let mut ordered = rc.data.plugins_for(m.route.id, m.service.id);
                 ordered.sort_by_key(|p| p.ordering);
                 ordered.iter().map(|p| p.plugin_type.as_str()).collect()
             };
-            Json(json!({
+            let mut out = json!({
                 "matched": true,
                 "route_id": m.route.id,
                 "route_name": m.route.name,
@@ -713,7 +752,25 @@ pub async fn router_test(
                 "strip_path": m.route.strip_path,
                 "preserve_host": m.route.preserve_host,
                 "plugins": plugins,
-            }))
+            });
+            if !m.route.splits.is_empty() {
+                let splits: Vec<Value> = m
+                    .route
+                    .splits
+                    .iter()
+                    .map(|sp| {
+                        let name = rc
+                            .data
+                            .services
+                            .get(&sp.service_id)
+                            .map(|svc| svc.name.clone())
+                            .unwrap_or_else(|| format!("#{}", sp.service_id));
+                        json!({ "service_id": sp.service_id, "service_name": name, "weight": sp.weight })
+                    })
+                    .collect();
+                out["splits"] = json!(splits);
+            }
+            Json(out)
         }
         None => Json(json!({ "matched": false })),
     }

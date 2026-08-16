@@ -56,6 +56,8 @@ async fn crud_and_snapshot_roundtrip() {
             hosts: vec![],
             paths: vec!["/api".into()],
             methods: vec![],
+            headers: Default::default(),
+            splits: vec![],
             strip_path: true,
             preserve_host: false,
             enabled: true,
@@ -93,7 +95,7 @@ async fn crud_and_snapshot_roundtrip() {
     assert_eq!(snap.targets.get(&svc.id).map(|v| v.len()), Some(2));
     assert_eq!(snap.key_index.get("secret-key-123"), Some(&consumer.id));
 
-    let m = snap.match_route("anything", "/api/users", "GET").expect("route match");
+    let m = snap.match_route("anything", "/api/users", "GET", &|_| None).expect("route match");
     assert_eq!(m.route.id, route.id);
     assert_eq!(m.service.id, svc.id);
     assert!(m.route.strip_path);

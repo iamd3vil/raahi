@@ -58,6 +58,8 @@ pub fn map_route(r: &SqliteRow) -> Route {
         hosts: json_strings(&r.get::<String, _>("hosts")),
         paths: json_strings(&r.get::<String, _>("paths")),
         methods: json_strings(&r.get::<String, _>("methods")),
+        headers: serde_json::from_str(&r.get::<String, _>("headers")).unwrap_or_default(),
+        splits: serde_json::from_str(&r.get::<String, _>("splits")).unwrap_or_default(),
         strip_path: r.get::<i64, _>("strip_path") != 0,
         preserve_host: r.get::<i64, _>("preserve_host") != 0,
         enabled: r.get::<i64, _>("enabled") != 0,

@@ -192,7 +192,7 @@ impl Store {
     pub async fn create_route(&self, r: &RouteSpec) -> Result<Route, StoreError> {
         let res = sqlx::query(
             "INSERT INTO routes (name, service_id, priority, hosts, paths, methods, \
-             strip_path, preserve_host, enabled) VALUES (?,?,?,?,?,?,?,?,?)",
+             headers, splits, strip_path, preserve_host, enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(&r.name)
         .bind(r.service_id)
@@ -200,6 +200,8 @@ impl Store {
         .bind(serde_json::to_string(&r.hosts).unwrap())
         .bind(serde_json::to_string(&r.paths).unwrap())
         .bind(serde_json::to_string(&r.methods).unwrap())
+        .bind(serde_json::to_string(&r.headers).unwrap())
+        .bind(serde_json::to_string(&r.splits).unwrap())
         .bind(r.strip_path as i64)
         .bind(r.preserve_host as i64)
         .bind(r.enabled as i64)
@@ -212,7 +214,7 @@ impl Store {
     pub async fn update_route(&self, id: Id, r: &RouteSpec) -> Result<Option<Route>, StoreError> {
         let res = sqlx::query(
             "UPDATE routes SET name=?, service_id=?, priority=?, hosts=?, paths=?, methods=?, \
-             strip_path=?, preserve_host=?, enabled=? WHERE id=?",
+             headers=?, splits=?, strip_path=?, preserve_host=?, enabled=? WHERE id=?",
         )
         .bind(&r.name)
         .bind(r.service_id)
@@ -220,6 +222,8 @@ impl Store {
         .bind(serde_json::to_string(&r.hosts).unwrap())
         .bind(serde_json::to_string(&r.paths).unwrap())
         .bind(serde_json::to_string(&r.methods).unwrap())
+        .bind(serde_json::to_string(&r.headers).unwrap())
+        .bind(serde_json::to_string(&r.splits).unwrap())
         .bind(r.strip_path as i64)
         .bind(r.preserve_host as i64)
         .bind(r.enabled as i64)

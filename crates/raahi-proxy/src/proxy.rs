@@ -2,6 +2,7 @@
 //! execution (auth / rate-limit / CORS / transforms), upstream selection, path/host
 //! rewriting, and access logging. Reads the hot-swappable [`ConfigHandle`] each request.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -23,6 +24,8 @@ pub struct RaahiProxy {
     pub metrics: Arc<Metrics>,
     /// Channel to the http-log delivery service.
     pub log_tx: LogSender,
+    /// Round-robin counter for routes with weighted traffic splits.
+    pub split_counter: AtomicUsize,
 }
 
 /// Per-request state threaded across filter phases.
@@ -120,14 +123,46 @@ impl ProxyHttp for RaahiProxy {
         // of the live config. Produces an optional short-circuit response.
         let short: Option<ShortResp> = {
             let rc = self.config.load();
-            let Some(m) = rc.data.match_route(&host, &path, &method) else {
+            let header = |name: &str| {
+                req_headers
+                    .get(name)
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string())
+            };
+            let Some(m) = rc.data.match_route(&host, &path, &method, &header) else {
                 session
                     .respond_error_with_body(404, Bytes::from_static(b"Raahi: no matching route\n"))
                     .await?;
                 return Ok(true);
             };
             let route_id = m.route.id;
-            let service_id = m.service.id;
+            // Weighted traffic split: pick a service by round-robin over the split
+            // weights, ignoring entries whose service vanished from the snapshot.
+            let service_id = if m.route.splits.is_empty() {
+                m.service.id
+            } else {
+                let valid: Vec<_> = m
+                    .route
+                    .splits
+                    .iter()
+                    .filter(|sp| rc.services.contains_key(&sp.service_id))
+                    .collect();
+                let total: u32 = valid.iter().map(|sp| sp.weight).sum();
+                if total == 0 {
+                    m.service.id // no valid split entry — fall back to the route's service
+                } else {
+                    let mut n = (self.split_counter.fetch_add(1, Ordering::Relaxed) % total as usize) as u32;
+                    let mut picked = m.service.id;
+                    for sp in &valid {
+                        if n < sp.weight {
+                            picked = sp.service_id;
+                            break;
+                        }
+                        n -= sp.weight;
+                    }
+                    picked
+                }
+            };
             ctx.route_id = Some(route_id);
             ctx.service_id = Some(service_id);
             ctx.matched_prefix = m.matched_prefix.to_string();
