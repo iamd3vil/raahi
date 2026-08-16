@@ -245,6 +245,66 @@ impl Store {
         Ok(res.rows_affected() > 0)
     }
 
+    // ---- stream routes ----------------------------------------------------------
+    pub async fn list_stream_routes(&self) -> Result<Vec<StreamRoute>, StoreError> {
+        let rows = sqlx::query("SELECT * FROM stream_routes ORDER BY id")
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.iter().map(map_stream_route).collect())
+    }
+
+    pub async fn get_stream_route(&self, id: Id) -> Result<Option<StreamRoute>, StoreError> {
+        let row = sqlx::query("SELECT * FROM stream_routes WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.as_ref().map(map_stream_route))
+    }
+
+    pub async fn create_stream_route(&self, r: &StreamRouteSpec) -> Result<StreamRoute, StoreError> {
+        let res = sqlx::query(
+            "INSERT INTO stream_routes (name, listen_addr, service_id, enabled) VALUES (?,?,?,?)",
+        )
+        .bind(&r.name)
+        .bind(&r.listen_addr)
+        .bind(r.service_id)
+        .bind(r.enabled as i64)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(self.get_stream_route(res.last_insert_rowid()).await?.unwrap())
+    }
+
+    pub async fn update_stream_route(
+        &self,
+        id: Id,
+        r: &StreamRouteSpec,
+    ) -> Result<Option<StreamRoute>, StoreError> {
+        let res = sqlx::query(
+            "UPDATE stream_routes SET name=?, listen_addr=?, service_id=?, enabled=? WHERE id=?",
+        )
+        .bind(&r.name)
+        .bind(&r.listen_addr)
+        .bind(r.service_id)
+        .bind(r.enabled as i64)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
+        if res.rows_affected() == 0 {
+            return Ok(None);
+        }
+        self.get_stream_route(id).await
+    }
+
+    pub async fn delete_stream_route(&self, id: Id) -> Result<bool, StoreError> {
+        let res = sqlx::query("DELETE FROM stream_routes WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
     // ---- plugins --------------------------------------------------------------
     pub async fn list_plugins(&self) -> Result<Vec<Plugin>, StoreError> {
         let rows = sqlx::query("SELECT * FROM plugins ORDER BY ordering, id")

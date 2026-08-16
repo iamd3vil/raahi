@@ -5,6 +5,7 @@ export type View =
   | 'requests'
   | 'routes'
   | 'services'
+  | 'stream-routes'
   | 'plugins'
   | 'consumers'
   | 'certificates'

@@ -43,6 +43,7 @@ pub struct ImportReport {
     pub services: usize,
     pub targets: usize,
     pub routes: usize,
+    pub stream_routes: usize,
     pub plugins: usize,
     pub consumers: usize,
     pub credentials: usize,
@@ -119,6 +120,7 @@ impl Store {
         for table in [
             "plugins",
             "routes",
+            "stream_routes",
             "consumer_credentials",
             "consumers",
             "targets",
@@ -206,6 +208,27 @@ impl Store {
             .await?;
             route_map.insert(r.id, res.last_insert_rowid());
             report.routes += 1;
+        }
+
+        // Stream routes (service ids remapped; unknown services skipped, not fatal).
+        for sr in &doc.stream_routes {
+            let Some(&sid) = svc_map.get(&sr.service_id) else {
+                report.skipped.push(format!(
+                    "stream route '{}': unknown service {}",
+                    sr.name, sr.service_id
+                ));
+                continue;
+            };
+            sqlx::query(
+                "INSERT INTO stream_routes (name, listen_addr, service_id, enabled) VALUES (?,?,?,?)",
+            )
+            .bind(&sr.name)
+            .bind(&sr.listen_addr)
+            .bind(sid)
+            .bind(sr.enabled as i64)
+            .execute(&mut *tx)
+            .await?;
+            report.stream_routes += 1;
         }
 
         // Consumers + credentials.
@@ -364,6 +387,7 @@ impl Store {
         let services = self.list_services().await?;
         let targets = self.list_all_targets().await?;
         let routes = self.list_routes().await?;
+        let stream_routes = self.list_stream_routes().await?;
         let plugins = self.list_plugins().await?;
         let consumers = self.list_consumers().await?;
         let creds = self.list_all_credentials().await?;
@@ -383,6 +407,7 @@ impl Store {
         }
 
         let routes = routes.into_iter().filter(|r| r.enabled).collect();
+        let stream_routes = stream_routes.into_iter().filter(|r| r.enabled).collect();
         let plugins = plugins.into_iter().filter(|p| p.enabled).collect();
         let consumers = consumers.into_iter().map(|c| (c.id, c)).collect();
 
@@ -424,6 +449,7 @@ impl Store {
         Ok(ProxyConfig {
             version,
             routes,
+            stream_routes,
             services,
             targets: targets_map,
             plugins,

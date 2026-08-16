@@ -7,6 +7,7 @@
   import Requests from './pages/Requests.svelte';
   import Routes from './pages/Routes.svelte';
   import Services from './pages/Services.svelte';
+  import StreamRoutes from './pages/StreamRoutes.svelte';
   import Plugins from './pages/Plugins.svelte';
   import Consumers from './pages/Consumers.svelte';
   import Certificates from './pages/Certificates.svelte';
@@ -26,6 +27,7 @@
       items: [
         { id: 'routes', label: 'Routes', icon: 'M4 7h11M4 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 10h11m-11 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm15-5a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 0H8' },
         { id: 'services', label: 'Services', icon: 'M5 4h14a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm0 10h14a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1z' },
+        { id: 'stream-routes', label: 'Stream routes', icon: 'M8 3v18m8-18v18M3 8h18M3 16h18' },
         { id: 'plugins', label: 'Plugins', icon: 'M10 3v4m4-4v4M5 7h14l-1 12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 7z' },
       ],
     },
@@ -49,6 +51,7 @@
     requests: { title: 'Requests', sub: 'Recent requests through the proxy, live-tailed' },
     routes: { title: 'Routes', sub: 'Match requests by host, path, and method' },
     services: { title: 'Services', sub: 'Upstream groups with load balancing and health' },
+    'stream-routes': { title: 'Stream routes', sub: 'Raw TCP listeners proxied to services (L4)' },
     plugins: { title: 'Plugins', sub: 'Auth, rate limiting, CORS, and header transforms' },
     consumers: { title: 'Consumers', sub: 'Identities that auth plugins authenticate' },
     certificates: { title: 'Certificates', sub: 'TLS certificates served by SNI, hot-reloaded' },
@@ -170,6 +173,8 @@
           <Routes />
         {:else if ui.view === 'services'}
           <Services />
+        {:else if ui.view === 'stream-routes'}
+          <StreamRoutes />
         {:else if ui.view === 'plugins'}
           <Plugins />
         {:else if ui.view === 'consumers'}

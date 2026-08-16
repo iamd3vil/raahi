@@ -118,6 +118,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/targets/{id}", axum::routing::put(update_target).delete(delete_target))
         .route("/routes", get(list_routes).post(create_route))
         .route("/routes/{id}", get(get_route).put(update_route).delete(delete_route))
+        .route("/stream-routes", get(list_stream_routes).post(create_stream_route))
+        .route(
+            "/stream-routes/{id}",
+            axum::routing::put(update_stream_route).delete(delete_stream_route),
+        )
         .route("/plugins", get(list_plugins).post(create_plugin))
         .route("/plugins/{id}", get(get_plugin).put(update_plugin).delete(delete_plugin))
         .route("/cache/purge", axum::routing::post(purge_cache))

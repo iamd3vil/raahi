@@ -8,6 +8,7 @@ mod metrics;
 mod plugins;
 mod proxy;
 mod runtime;
+mod stream;
 mod tls;
 
 pub use health::HealthService;
@@ -17,6 +18,7 @@ pub use plugins::{purge_cache, validate_wasm, wat_to_wasm};
 pub use metrics::{ConsumerHit, Metrics, MetricsSnapshot, RequestRecord, RouteHit};
 pub use proxy::{Ctx, RaahiProxy};
 pub use runtime::{BackendRt, ConfigHandle, RuntimeConfig, ServiceRuntime};
+pub use stream::{stream_stats, StreamProxyApp};
 pub use tls::{sni_tls_settings, validate_cert, CertHandle, CertStore};
 
 use raahi_core::ProxyConfig;

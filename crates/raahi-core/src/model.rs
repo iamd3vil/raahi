@@ -138,6 +138,19 @@ pub struct Route {
     pub enabled: bool,
 }
 
+/// A raw TCP (L4) listener proxied to a [`Service`]'s targets. Adding/removing a
+/// stream route requires a restart to (un)bind the listener; retargeting an
+/// existing one to another service applies live.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamRoute {
+    pub id: Id,
+    pub name: String,
+    /// Local address the listener binds (e.g. `0.0.0.0:5432`).
+    pub listen_addr: String,
+    pub service_id: Id,
+    pub enabled: bool,
+}
+
 /// One entry of a [`Route`]'s weighted traffic split.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RouteSplit {

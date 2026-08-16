@@ -61,6 +61,14 @@ export interface Route {
   enabled: boolean;
 }
 
+export interface StreamRoute {
+  id: number;
+  name: string;
+  listen_addr: string;
+  service_id: number;
+  enabled: boolean;
+}
+
 export interface Plugin {
   id: number;
   type: PluginType;

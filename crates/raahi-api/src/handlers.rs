@@ -154,6 +154,72 @@ pub async fn delete_route(State(s): State<AppState>, Path(id): Path<Id>) -> ApiR
     Ok(Json(json!({ "deleted": true })))
 }
 
+// ---- stream routes -------------------------------------------------------------
+
+/// Reminder attached to stream-route responses whenever the set of listen
+/// addresses changed: listeners bind at startup only (retargeting is live).
+const LISTENER_NOTE: &str = "listener changes take effect on restart";
+
+/// listen_addr must be a valid socket address and the target service must exist.
+async fn validate_stream_route(s: &AppState, spec: &StreamRouteSpec) -> ApiResult<()> {
+    if spec.listen_addr.parse::<std::net::SocketAddr>().is_err() {
+        return Err(ApiError::BadRequest(format!(
+            "listen_addr '{}' is not a valid socket address (host:port)",
+            spec.listen_addr
+        )));
+    }
+    if s.store.get_service(spec.service_id).await?.is_none() {
+        return Err(ApiError::BadRequest(format!(
+            "service {} not found",
+            spec.service_id
+        )));
+    }
+    Ok(())
+}
+
+pub async fn list_stream_routes(State(s): State<AppState>) -> ApiResult<Json<Vec<StreamRoute>>> {
+    Ok(Json(s.store.list_stream_routes().await?))
+}
+
+pub async fn create_stream_route(
+    State(s): State<AppState>,
+    Json(spec): Json<StreamRouteSpec>,
+) -> ApiResult<Json<Value>> {
+    validate_stream_route(&s, &spec).await?;
+    let r = s.store.create_stream_route(&spec).await?;
+    reload(&s).await?;
+    let mut out = json!(r);
+    out["note"] = json!(LISTENER_NOTE); // a new listener needs binding
+    Ok(Json(out))
+}
+
+pub async fn update_stream_route(
+    State(s): State<AppState>,
+    Path(id): Path<Id>,
+    Json(spec): Json<StreamRouteSpec>,
+) -> ApiResult<Json<Value>> {
+    validate_stream_route(&s, &spec).await?;
+    let prev = s.store.get_stream_route(id).await?.ok_or(ApiError::NotFound)?;
+    let r = s.store.update_stream_route(id, &spec).await?.ok_or(ApiError::NotFound)?;
+    reload(&s).await?;
+    let mut out = json!(r);
+    if prev.listen_addr != r.listen_addr {
+        out["note"] = json!(LISTENER_NOTE); // rebinding; retargeting alone is live
+    }
+    Ok(Json(out))
+}
+
+pub async fn delete_stream_route(
+    State(s): State<AppState>,
+    Path(id): Path<Id>,
+) -> ApiResult<Json<Value>> {
+    if !s.store.delete_stream_route(id).await? {
+        return Err(ApiError::NotFound);
+    }
+    reload(&s).await?;
+    Ok(Json(json!({ "deleted": true, "note": LISTENER_NOTE })))
+}
+
 // ---- plugins -----------------------------------------------------------------
 pub async fn list_plugins(State(s): State<AppState>) -> ApiResult<Json<Vec<Plugin>>> {
     Ok(Json(s.store.list_plugins().await?))
@@ -677,6 +743,29 @@ pub async fn prometheus_metrics(State(s): State<AppState>) -> impl axum::respons
         ));
     }
 
+    // Stream (L4) listeners. Each family's samples stay contiguous.
+    let stream = raahi_proxy::stream_stats();
+    m("# HELP raahi_stream_connections_total TCP connections accepted per stream listener.".into());
+    m("# TYPE raahi_stream_connections_total counter".into());
+    for (listener, conns, _, _) in &stream {
+        m(format!(
+            "raahi_stream_connections_total{{listener=\"{}\"}} {conns}",
+            esc(listener)
+        ));
+    }
+    m("# HELP raahi_stream_bytes_total Bytes proxied per stream listener by direction (up = client to upstream).".into());
+    m("# TYPE raahi_stream_bytes_total counter".into());
+    for (listener, _, up, down) in &stream {
+        m(format!(
+            "raahi_stream_bytes_total{{listener=\"{}\",direction=\"up\"}} {up}",
+            esc(listener)
+        ));
+        m(format!(
+            "raahi_stream_bytes_total{{listener=\"{}\",direction=\"down\"}} {down}",
+            esc(listener)
+        ));
+    }
+
     m("# HELP raahi_config_version Monotonic config snapshot version.".into());
     m("# TYPE raahi_config_version gauge".into());
     m(format!("raahi_config_version {}", rc.data.version));
@@ -867,6 +956,7 @@ pub async fn export_config(
         "settings": s.store.get_settings().await?,
         "services": services_out,
         "routes": s.store.list_routes().await?,
+        "stream_routes": s.store.list_stream_routes().await?,
         "plugins": s.store.list_plugins().await?,
         "consumers": consumers_out,
         "certificates": certs,

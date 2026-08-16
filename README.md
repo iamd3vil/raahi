@@ -18,8 +18,14 @@ SQLite and atomically swapped into the running proxy with no restart.
 
 ## Features
 
-- **Routing** by host (exact + `*.wildcard`), path prefix (longest-match), and method, with priorities.
+- **Routing** by host (exact + `*.wildcard`), path prefix (longest-match), method, and
+  **header conditions** (exact value or presence), with priorities.
+- **Traffic splitting / canary**: routes can split across services by weight
+  (weighted round-robin per request).
 - **Load balancing** across weighted targets: round-robin, weighted, random, consistent-hash (by client IP).
+- **L4 stream routes**: raw TCP listeners spliced to services (databases, Redis, any
+  TCP protocol) reusing the same load balancing and health flags, with per-listener
+  connection/byte metrics. Retargeting applies live; listener add/remove needs a restart.
 - **Path & host rewriting** (`strip_path`, `preserve_host`) and `X-Forwarded-*` injection.
 - **Built-in plugins** (native Rust; scoped global / per-service / per-route):
   - Auth: `key-auth` (header or query), `basic-auth` (bcrypt), and `jwt`
@@ -30,7 +36,9 @@ SQLite and atomically swapped into the running proxy with no restart.
   - Traffic: `request-termination` (maintenance mode), `request-size-limit` (413),
     and `redirect` (301/302/307/308 with path preservation)
   - `cors` (preflight + response headers)
-  - `request-transform` / `response-transform` (add / remove headers)
+  - `proxy-cache` (in-memory TTL response cache with `x-cache` headers and a purge API)
+  - `request-transform` / `response-transform` (add / remove headers) and
+    `response-body-transform` (find/replace on text bodies)
   - `http-log` (batched JSON delivery of request records to an external collector,
     off the hot path)
 - **WASM user plugins**: upload `.wasm` binaries or WAT source and run them per

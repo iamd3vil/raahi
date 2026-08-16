@@ -15,6 +15,8 @@ pub struct ProxyConfig {
     pub version: u64,
     /// All enabled routes (matching scans these).
     pub routes: Vec<Route>,
+    /// All enabled stream (L4 TCP) routes, looked up live by listen address.
+    pub stream_routes: Vec<StreamRoute>,
     pub services: HashMap<Id, Service>,
     /// service_id -> its enabled targets.
     pub targets: HashMap<Id, Vec<Target>>,

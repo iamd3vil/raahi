@@ -66,6 +66,16 @@ pub fn map_route(r: &SqliteRow) -> Route {
     }
 }
 
+pub fn map_stream_route(r: &SqliteRow) -> StreamRoute {
+    StreamRoute {
+        id: r.get("id"),
+        name: r.get("name"),
+        listen_addr: r.get("listen_addr"),
+        service_id: r.get("service_id"),
+        enabled: r.get::<i64, _>("enabled") != 0,
+    }
+}
+
 pub fn map_plugin(r: &SqliteRow) -> Plugin {
     Plugin {
         id: r.get("id"),

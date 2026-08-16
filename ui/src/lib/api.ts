@@ -13,6 +13,7 @@ import type {
   RouterTestResult,
   Service,
   Settings,
+  StreamRoute,
   Target,
   ImportReport,
   TargetHealth,
@@ -89,6 +90,14 @@ export const api = {
   createRoute: (r: Partial<Route>) => req<Route>('POST', '/routes', r),
   updateRoute: (id: number, r: Partial<Route>) => req<Route>('PUT', `/routes/${id}`, r),
   deleteRoute: (id: number) => req('DELETE', `/routes/${id}`),
+
+  // stream routes (L4). Mutations may carry a `note` when a restart is needed.
+  listStreamRoutes: () => req<StreamRoute[]>('GET', '/stream-routes'),
+  createStreamRoute: (r: Partial<StreamRoute>) =>
+    req<StreamRoute & { note?: string }>('POST', '/stream-routes', r),
+  updateStreamRoute: (id: number, r: Partial<StreamRoute>) =>
+    req<StreamRoute & { note?: string }>('PUT', `/stream-routes/${id}`, r),
+  deleteStreamRoute: (id: number) => req<{ note?: string }>('DELETE', `/stream-routes/${id}`),
 
   // plugins
   listPlugins: () => req<Plugin[]>('GET', '/plugins'),

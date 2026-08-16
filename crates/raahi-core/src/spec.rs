@@ -93,6 +93,16 @@ pub struct RouteSpec {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamRouteSpec {
+    pub name: String,
+    /// Local address the listener binds (must parse as a socket address).
+    pub listen_addr: String,
+    pub service_id: Id,
+    #[serde(default = "d_true")]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginSpec {
     #[serde(rename = "type")]
     pub plugin_type: PluginType,
@@ -165,6 +175,8 @@ pub struct ImportDoc {
     pub services: Vec<ImportService>,
     #[serde(default)]
     pub routes: Vec<Route>,
+    #[serde(default)]
+    pub stream_routes: Vec<StreamRoute>,
     #[serde(default)]
     pub plugins: Vec<Plugin>,
     #[serde(default)]

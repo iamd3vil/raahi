@@ -14,7 +14,7 @@ use raahi_api::ApiService;
 use raahi_core::{RouteSpec, ServiceSpec, TargetSpec};
 use raahi_proxy::{
     config_handle, log_channel, sni_tls_settings, CertHandle, CertStore, HttpLogService, Metrics,
-    RaahiProxy,
+    RaahiProxy, StreamProxyApp,
 };
 use raahi_store::Store;
 use tracing::{info, warn};
@@ -128,6 +128,9 @@ fn main() -> anyhow::Result<()> {
     })?;
     drop(setup_rt);
 
+    // Stream (L4) listeners bind at startup only; grab the set before the snapshot
+    // moves into the config handle.
+    let stream_routes = snapshot.stream_routes.clone();
     let config = config_handle(snapshot);
     let metrics = Arc::new(Metrics::new());
     // Live cert handle shared by the TLS listener (reads it per handshake) and the admin
@@ -170,6 +173,20 @@ fn main() -> anyhow::Result<()> {
     }
 
     server.add_service(proxy_svc);
+
+    // L4 stream listeners, one raw TCP service per enabled stream route. Adding or
+    // removing a stream route requires a restart; retargeting applies live.
+    for sr in &stream_routes {
+        let app = StreamProxyApp::new(config.clone(), sr.listen_addr.clone());
+        let mut stream_svc =
+            pingora::services::listening::Service::new(format!("stream-{}", sr.name), app);
+        stream_svc.add_tcp(&sr.listen_addr);
+        server.add_service(stream_svc);
+        info!(
+            "stream (L4) listener on {} -> service #{} ({})",
+            sr.listen_addr, sr.service_id, sr.name
+        );
+    }
 
     // Admin API (REST + UI) as a background service sharing the live config + metrics.
     let admin_addr = cli.admin_addr.unwrap_or_else(|| settings.admin_addr.clone());
