@@ -2,12 +2,17 @@ use raahi_core::*;
 use raahi_store::Store;
 
 /// Unique temp DB path per test run (no shared-cache footguns with `:memory:` pools).
+/// A process-local counter guards against clock-resolution collisions when tests
+/// run in parallel.
 fn tmp_db() -> String {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("raahi-test-{}-{nanos}.db", std::process::id()));
+    let path = std::env::temp_dir()
+        .join(format!("raahi-test-{}-{seq}-{nanos}.db", std::process::id()));
     format!("sqlite://{}", path.display())
 }
 

@@ -132,6 +132,11 @@ pub struct JwtCfg {
     pub uri_param_names: Vec<String>,
     /// Reject tokens without an `exp` claim.
     pub require_exp: bool,
+    /// Identity-provider mode: verify RS256 tokens against this JWKS document
+    /// (refreshed in the background) instead of per-consumer credentials.
+    pub jwks_url: Option<String>,
+    /// JWKS mode: claim used as the consumer name in logs/rate-limits.
+    pub consumer_claim: String,
 }
 
 impl Default for JwtCfg {
@@ -140,6 +145,8 @@ impl Default for JwtCfg {
             key_claim_name: "iss".into(),
             uri_param_names: vec!["jwt".into()],
             require_exp: false,
+            jwks_url: None,
+            consumer_claim: "sub".into(),
         }
     }
 }
@@ -179,6 +186,11 @@ pub fn jwt_auth(c: &JwtCfg, input: &ReqInput, cfg: &ProxyConfig, effects: &mut E
     let Some(token) = token else {
         return jwt_reject("missing JWT");
     };
+
+    // Identity-provider mode: verify against the JWKS cache instead of credentials.
+    if let Some(jwks_url) = c.jwks_url.as_deref().filter(|u| !u.is_empty()) {
+        return jwt_via_jwks(c, jwks_url, &token, effects);
+    }
 
     // Read the key claim from the (unverified) payload to find the credential.
     let mut parts = token.split('.');
@@ -230,5 +242,45 @@ pub fn jwt_auth(c: &JwtCfg, input: &ReqInput, cfg: &ProxyConfig, effects: &mut E
         .map(|c| c.username.clone())
         .unwrap_or_default();
     effects.consumer = Some((cred.consumer_id, username));
+    Action::Continue
+}
+
+/// Verify an RS256 token against a JWKS document (kid-matched). The consumer is
+/// "virtual": named by `consumer_claim` (id 0), usable for logs and rate limiting
+/// but not for group-based ACLs.
+fn jwt_via_jwks(c: &JwtCfg, jwks_url: &str, token: &str, effects: &mut Effects) -> Action {
+    use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
+
+    let Ok(header) = decode_header(token) else {
+        return jwt_reject("malformed JWT");
+    };
+    if header.alg != Algorithm::RS256 {
+        return jwt_reject("JWKS mode requires RS256");
+    }
+    let Some(key) = crate::jwks::lookup(jwks_url, header.kid.as_deref()) else {
+        return jwt_reject("unknown signing key");
+    };
+    let Ok(dkey) = DecodingKey::from_rsa_components(&key.n, &key.e) else {
+        return jwt_reject("invalid JWKS key");
+    };
+
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.validate_exp = true;
+    validation.validate_nbf = true;
+    validation.validate_aud = false;
+    validation.required_spec_claims = if c.require_exp {
+        std::iter::once("exp".to_string()).collect()
+    } else {
+        Default::default()
+    };
+    let Ok(data) = decode::<serde_json::Value>(token, &dkey, &validation) else {
+        return jwt_reject("invalid JWT");
+    };
+
+    let name = data.claims[&c.consumer_claim]
+        .as_str()
+        .unwrap_or("jwks-authenticated")
+        .to_string();
+    effects.consumer = Some((0, name));
     Action::Continue
 }

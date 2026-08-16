@@ -43,7 +43,18 @@ SQLite and atomically swapped into the running proxy with no restart.
   `?access_token=`). Lockout recovery: clear `settings.admin_token_hash` in SQLite
   and restart.
 - **TLS termination** via boringssl with per-SNI certificate selection and live (no-restart)
-  certificate reload, **upstream TLS**, and **active + passive health checks**.
+  certificate reload, and **upstream TLS**.
+- **Health**: active checks per target (TCP connect, or HTTP GET on a per-service
+  `health_path` with 2xx/3xx = pass) with consecutive-failure thresholds, plus
+  passive circuit breaking — a failed connect ejects the backend immediately.
+- **Declarative config**: `GET /export` (optionally with secrets for a restorable
+  backup) and `POST /import` — a transactional full-replace with id remapping,
+  usable for GitOps and disaster recovery.
+- **Prometheus**: `GET /metrics` exposition endpoint (requests, status classes,
+  latency percentiles, per-route/consumer counters, target health gauges).
+- **JWKS / identity-provider auth**: the `jwt` plugin can verify RS256 tokens
+  against a `jwks_url` (refreshed every 30s, kid-matched) instead of per-consumer
+  credentials — validates Auth0/Keycloak/Google-style tokens out of the box.
 - **Live observability**: request metrics with latency percentiles (p50/p95/p99, µs precision),
   status breakdown, an SSE-driven dashboard with a "transit map" visualizing traffic flowing
   routes → services → targets (health-aware), a filterable live request log, and per-target

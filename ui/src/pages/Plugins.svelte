@@ -67,7 +67,7 @@
   const DEFAULTS: Record<PluginType, Record<string, unknown>> = {
     'key-auth': { key_names: ['apikey', 'x-api-key'], hide_credentials: false },
     'basic-auth': { realm: 'Raahi' },
-    jwt: { key_claim_name: 'iss', uri_param_names: ['jwt'], require_exp: false },
+    jwt: { key_claim_name: 'iss', uri_param_names: ['jwt'], require_exp: false, jwks_url: '', consumer_claim: 'sub' },
     acl: { allow: [], deny: [] },
     'ip-restriction': { allow: [], deny: [], status: 403, message: 'Your IP address is not allowed' },
     'rate-limit': { limit: 60, window_secs: 60, key: 'ip', headers: true },
@@ -139,6 +139,8 @@
         key_claim_name: String(cfg.key_claim_name || 'iss'),
         uri_param_names: csv(String(cfg.uri_param_names_csv ?? list(cfg.uri_param_names))),
         require_exp: !!cfg.require_exp,
+        jwks_url: String(cfg.jwks_url ?? '').trim() || null,
+        consumer_claim: String(cfg.consumer_claim || 'sub'),
       };
     if (t === 'acl')
       return {
@@ -513,6 +515,20 @@
     <button class="opt" onclick={() => (cfg.require_exp = !cfg.require_exp)}>
       <span class="toggle {cfg.require_exp ? 'on' : ''}"></span> Reject tokens without an exp claim
     </button>
+    <div class="row">
+      <div class="field">
+        <label for="jwt-jwks">JWKS URL <span class="faint">(optional — identity-provider mode)</span></label>
+        <input id="jwt-jwks" class="input mono" bind:value={cfg.jwks_url} placeholder="https://idp.example.com/.well-known/jwks.json" />
+        <span class="hint">
+          When set, RS256 tokens are verified against these keys (refreshed every 30s) instead of consumer
+          credentials. Consumer identity comes from the claim below.
+        </span>
+      </div>
+      <div class="field" style="flex:0 0 140px">
+        <label for="jwt-cclaim">Consumer claim</label>
+        <input id="jwt-cclaim" class="input mono" bind:value={cfg.consumer_claim} placeholder="sub" />
+      </div>
+    </div>
   {:else if form.type === 'acl'}
     <div class="field">
       <label for="acl-allow">Allowed groups <span class="faint">(comma-separated; blank = allow all)</span></label>

@@ -183,6 +183,12 @@ fn main() -> anyhow::Result<()> {
 
     server.add_service(background_service("http-log", HttpLogService::new(log_rx)));
 
+    // JWKS refresher for jwt plugins in identity-provider mode.
+    server.add_service(background_service(
+        "jwks",
+        raahi_proxy::JwksService { config: config.clone() },
+    ));
+
     // Active health checks for upstream targets.
     let health = raahi_proxy::HealthService {
         config: config.clone(),
