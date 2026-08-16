@@ -36,7 +36,9 @@ impl Default for BodyTransformCfg {
 impl BodyTransformCfg {
     /// Whether a response content-type matches one of the configured prefixes.
     pub fn matches_content_type(&self, content_type: &str) -> bool {
-        self.content_types.iter().any(|p| content_type.starts_with(p.as_str()))
+        self.content_types
+            .iter()
+            .any(|p| content_type.starts_with(p.as_str()))
     }
 
     /// Apply every replacement rule in order.
@@ -56,8 +58,14 @@ mod tests {
     fn applies_rules_in_order() {
         let cfg = BodyTransformCfg {
             replace: vec![
-                ReplaceRule { from: "backend".into(), to: "served_by".into() },
-                ReplaceRule { from: "served_by_x".into(), to: "y".into() },
+                ReplaceRule {
+                    from: "backend".into(),
+                    to: "served_by".into(),
+                },
+                ReplaceRule {
+                    from: "served_by_x".into(),
+                    to: "y".into(),
+                },
             ],
             ..Default::default()
         };

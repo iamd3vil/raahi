@@ -112,8 +112,7 @@ impl RateLimitState {
             b.cur_count += 1;
             let in_window = now.duration_since(b.window_start);
             let prev_weight = 1.0 - (in_window.as_secs_f64() / window.as_secs_f64());
-            let effective =
-                (b.prev_count as f64 * prev_weight).floor() as u32 + b.cur_count;
+            let effective = (b.prev_count as f64 * prev_weight).floor() as u32 + b.cur_count;
             let reset = window.saturating_sub(in_window).as_secs().max(1);
             (effective, reset)
         };
@@ -133,9 +132,15 @@ impl RateLimitState {
         } else {
             if self.cfg.headers {
                 let remaining = self.cfg.limit.saturating_sub(effective);
-                effects.resp_add.push(("ratelimit-limit".into(), self.cfg.limit.to_string()));
-                effects.resp_add.push(("ratelimit-remaining".into(), remaining.to_string()));
-                effects.resp_add.push(("ratelimit-reset".into(), reset_secs.to_string()));
+                effects
+                    .resp_add
+                    .push(("ratelimit-limit".into(), self.cfg.limit.to_string()));
+                effects
+                    .resp_add
+                    .push(("ratelimit-remaining".into(), remaining.to_string()));
+                effects
+                    .resp_add
+                    .push(("ratelimit-reset".into(), reset_secs.to_string()));
             }
             Action::Continue
         }

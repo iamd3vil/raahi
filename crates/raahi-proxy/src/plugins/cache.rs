@@ -86,7 +86,11 @@ impl Default for CacheCfg {
 
 /// Request phase: answer unexpired hits, record a store intent on misses.
 pub fn check(cfg: &CacheCfg, input: &ReqInput, effects: &mut Effects) -> Action {
-    if !cfg.methods.iter().any(|m| m.eq_ignore_ascii_case(input.method)) {
+    if !cfg
+        .methods
+        .iter()
+        .any(|m| m.eq_ignore_ascii_case(input.method))
+    {
         return Action::Continue;
     }
     let mut key = format!("{} {}{}", input.method, input.host, input.path);
@@ -152,7 +156,11 @@ mod tests {
         let mut fx = Effects::default();
         assert!(matches!(check(&cfg, &inp, &mut fx), Action::Continue));
         let intent = fx.cache_store.expect("miss records an intent");
-        intent.store(200, vec![("content-type".into(), "text/plain".into())], b"hello".to_vec());
+        intent.store(
+            200,
+            vec![("content-type".into(), "text/plain".into())],
+            b"hello".to_vec(),
+        );
 
         let mut fx = Effects::default();
         match check(&cfg, &inp, &mut fx) {

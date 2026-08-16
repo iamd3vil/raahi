@@ -224,7 +224,10 @@ impl PluginType {
     }
     /// Whether this plugin authenticates the request (sets a consumer).
     pub fn is_auth(self) -> bool {
-        matches!(self, PluginType::KeyAuth | PluginType::BasicAuth | PluginType::Jwt)
+        matches!(
+            self,
+            PluginType::KeyAuth | PluginType::BasicAuth | PluginType::Jwt
+        )
     }
 }
 

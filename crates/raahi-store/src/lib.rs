@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use raahi_core::{CredentialType, ImportDoc, JwtCred, ProxyConfig, RouteSplit, Target};
 use serde::Serialize;
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::SqlitePool;
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
@@ -128,7 +128,9 @@ impl Store {
             "certificates",
             "wasm_modules",
         ] {
-            sqlx::query(&format!("DELETE FROM {table}")).execute(&mut *tx).await?;
+            sqlx::query(&format!("DELETE FROM {table}"))
+                .execute(&mut *tx)
+                .await?;
         }
 
         // Services + targets (old id -> new id).
@@ -174,7 +176,10 @@ impl Store {
         let mut route_map: Map<i64, i64> = Map::new();
         for r in &doc.routes {
             let Some(&sid) = svc_map.get(&r.service_id) else {
-                report.skipped.push(format!("route '{}': unknown service {}", r.name, r.service_id));
+                report.skipped.push(format!(
+                    "route '{}': unknown service {}",
+                    r.name, r.service_id
+                ));
                 continue;
             };
             // Remap split service ids; entries pointing at services that didn't make
@@ -182,7 +187,10 @@ impl Store {
             let mut splits: Vec<RouteSplit> = Vec::new();
             for sp in &r.splits {
                 match svc_map.get(&sp.service_id) {
-                    Some(&new) => splits.push(RouteSplit { service_id: new, weight: sp.weight }),
+                    Some(&new) => splits.push(RouteSplit {
+                        service_id: new,
+                        weight: sp.weight,
+                    }),
                     None => report.skipped.push(format!(
                         "route '{}': split references unknown service {}",
                         r.name, sp.service_id
@@ -247,7 +255,9 @@ impl Store {
                 let identifier = cr["identifier"].as_str().unwrap_or("");
                 let secret = cr["secret"].as_str();
                 if identifier.is_empty() || CredentialType::from_str(ctype).is_none() {
-                    report.skipped.push(format!("credential for '{}': malformed", c.username));
+                    report
+                        .skipped
+                        .push(format!("credential for '{}': malformed", c.username));
                     continue;
                 }
                 // basic-auth / jwt credentials are useless without their secret
@@ -303,12 +313,16 @@ impl Store {
         for mv in &doc.wasm_modules {
             let name = mv["name"].as_str().unwrap_or("");
             let Some(b64) = mv["wasm_base64"].as_str() else {
-                report.skipped.push(format!("wasm module '{name}': no wasm_base64 in export"));
+                report
+                    .skipped
+                    .push(format!("wasm module '{name}': no wasm_base64 in export"));
                 continue;
             };
             use base64::Engine;
             let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64) else {
-                report.skipped.push(format!("wasm module '{name}': invalid base64"));
+                report
+                    .skipped
+                    .push(format!("wasm module '{name}': invalid base64"));
                 continue;
             };
             sqlx::query(
@@ -329,7 +343,10 @@ impl Store {
                 Some(old) => match svc_map.get(&old) {
                     Some(&new) => Some(new),
                     None => {
-                        report.skipped.push(format!("plugin {}: unknown service {old}", p.plugin_type.as_str()));
+                        report.skipped.push(format!(
+                            "plugin {}: unknown service {old}",
+                            p.plugin_type.as_str()
+                        ));
                         continue;
                     }
                 },
@@ -339,7 +356,10 @@ impl Store {
                 Some(old) => match route_map.get(&old) {
                     Some(&new) => Some(new),
                     None => {
-                        report.skipped.push(format!("plugin {}: unknown route {old}", p.plugin_type.as_str()));
+                        report.skipped.push(format!(
+                            "plugin {}: unknown route {old}",
+                            p.plugin_type.as_str()
+                        ));
                         continue;
                     }
                 },
@@ -363,7 +383,9 @@ impl Store {
 
         // Settings (admin token hash is never touched by imports).
         if let Some(s) = &doc.settings {
-            let active_cert = s.active_certificate_id.and_then(|old| cert_map.get(&old).copied());
+            let active_cert = s
+                .active_certificate_id
+                .and_then(|old| cert_map.get(&old).copied());
             sqlx::query(
                 "UPDATE settings SET proxy_http_addr=?, proxy_https_addr=?, admin_addr=?, \
                  default_lb=?, active_certificate_id=? WHERE id=1",
@@ -431,7 +453,9 @@ impl Store {
                         continue;
                     };
                     let algorithm = v["algorithm"].as_str().unwrap_or("HS256").to_string();
-                    let Some(secret) = v["secret"].as_str() else { continue };
+                    let Some(secret) = v["secret"].as_str() else {
+                        continue;
+                    };
                     jwt_index.insert(
                         cr.identifier,
                         JwtCred {

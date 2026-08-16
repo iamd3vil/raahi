@@ -10,8 +10,8 @@
 //! Runs as a Pingora background service.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -122,7 +122,11 @@ impl HealthService {
                 tracing::info!(
                     "health: {addr} is now {} ({})",
                     if now { "up" } else { "down" },
-                    if p.health_path.is_some() { "http" } else { "tcp" },
+                    if p.health_path.is_some() {
+                        "http"
+                    } else {
+                        "tcp"
+                    },
                 );
             }
         }

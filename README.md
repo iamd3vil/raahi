@@ -55,8 +55,8 @@ SQLite and atomically swapped into the running proxy with no restart.
 - **Health**: active checks per target (TCP connect, or HTTP GET on a per-service
   `health_path` with 2xx/3xx = pass) with consecutive-failure thresholds, plus
   passive circuit breaking — a failed connect ejects the backend immediately.
-- **Declarative config**: `GET /export` (optionally with secrets for a restorable
-  backup) and `POST /import` — a transactional full-replace with id remapping,
+- **Declarative config**: `GET /api/v1/export` (optionally with secrets for a restorable
+  backup) and `POST /api/v1/import` — a transactional full-replace with id remapping,
   usable for GitOps and disaster recovery.
 - **Prometheus**: `GET /metrics` exposition endpoint (requests, status classes,
   latency percentiles, per-route/consumer counters, target health gauges).
@@ -138,9 +138,13 @@ certificates are all managed via `/api/v1/*` and take effect immediately.
 
 ## Admin API (`/api/v1`)
 
+The complete OpenAPI 3.0 contract is served at [`/openapi.yaml`](http://localhost:9080/openapi.yaml),
+with an interactive reference at [`/docs`](http://localhost:9080/docs). See
+[`docs/API.md`](docs/API.md) for authentication, common workflows, and operational caveats.
+
 `services`, `services/{id}/targets`, `targets/{id}`, `routes`, `plugins`, `consumers`,
-`consumers/{id}/credentials`, `credentials/{id}`, `certificates`, `settings` — standard
-REST CRUD. Plus `metrics`, `requests`, `events` (SSE live stream), and `config` (debug).
+`consumers/{id}/credentials`, `credentials/{id}`, `certificates`, and `settings` provide
+the control-plane CRUD surface. PUT is a full replacement, not a partial update.
 
 ```bash
 curl -X POST localhost:9080/api/v1/services \
@@ -160,21 +164,22 @@ Manage certificates in the UI — add, replace, remove, or change the default, a
 running HTTPS listener picks them up **live, with no restart**. (One exception: if HTTPS
 starts with zero certificates the listener isn't bound, so enabling HTTPS for the very
 first time needs a restart.) Cert private keys are treated as secrets: they stay in
-memory, are never written to disk, never logged, and never returned by the API.
+SQLite and memory, are never logged, and are never returned by ordinary resource APIs.
+Protect the database and any export made with `include_secrets=true` accordingly.
 
 ## Security notes
 
-- **The admin API is unauthenticated.** It defaults to binding `127.0.0.1:9080`
-  (loopback only). Do **not** expose it on a public interface without putting an
-  authenticating reverse proxy / network controls in front of it. The proxy data plane
-  (`:8080` / `:8443`) is the public surface.
-- Passwords are hashed with **bcrypt**; API keys and TLS private keys are never returned
-  by the API or written to logs.
+- **Admin API authentication is optional.** It defaults to loopback and is open until an
+  admin token is generated. Once enabled, send the token as `Authorization: Bearer ...`
+  or `X-Admin-Token`. Keep network controls in place if the listener is exposed beyond
+  localhost; `/healthz`, `/metrics`, `/openapi.yaml`, `/docs`, and
+  `/api/v1/admin/status` intentionally remain public.
+- Basic-auth passwords are hashed with **bcrypt**; Basic/JWT secrets and TLS private keys
+  are not returned by ordinary resource APIs or written to logs. Key-auth API keys are
+  identifiers and are returned by credential listings, so protect those responses.
 - All database access uses **parameterized queries** (sqlx bind parameters).
 - Defaults follow least privilege (no permissive CORS on the admin API; loopback admin bind).
 
 ## Roadmap / out of scope
 
-- **WASM user-function plugins** — the plugin trait/registry is the seam; native plugins
-  ship today, WASM is a later phase.
-- gRPC / raw TCP stream proxying; multi-node config sync.
+- gRPC and multi-node config sync.

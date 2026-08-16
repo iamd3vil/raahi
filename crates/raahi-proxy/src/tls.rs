@@ -15,7 +15,7 @@ use pingora::tls::ext::{ssl_use_certificate, ssl_use_private_key};
 use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::ssl::NameType;
 use pingora::tls::x509::X509;
-use raahi_core::{host_matches, Certificate};
+use raahi_core::{Certificate, host_matches};
 
 /// A parsed certificate + key with the SNI patterns it serves.
 pub struct CertEntry {
@@ -34,7 +34,8 @@ pub struct CertStore {
 /// Validate that a cert + key parse as PEM (used by the API for create-time feedback).
 pub fn validate_cert(cert_pem: &str, key_pem: &str) -> Result<(), String> {
     X509::from_pem(cert_pem.as_bytes()).map_err(|e| format!("invalid certificate PEM: {e}"))?;
-    PKey::private_key_from_pem(key_pem.as_bytes()).map_err(|e| format!("invalid private key PEM: {e}"))?;
+    PKey::private_key_from_pem(key_pem.as_bytes())
+        .map_err(|e| format!("invalid private key PEM: {e}"))?;
     Ok(())
 }
 
@@ -49,14 +50,26 @@ impl CertStore {
                 X509::from_pem(c.cert_pem.as_bytes()),
                 PKey::private_key_from_pem(c.key_pem.as_bytes()),
             ) {
-                (Ok(cert), Ok(key)) => entries.push(CertEntry { id: c.id, sni: c.sni, cert, key }),
-                _ => tracing::warn!("certificate '{}' (#{}) failed to parse; skipping", c.name, c.id),
+                (Ok(cert), Ok(key)) => entries.push(CertEntry {
+                    id: c.id,
+                    sni: c.sni,
+                    cert,
+                    key,
+                }),
+                _ => tracing::warn!(
+                    "certificate '{}' (#{}) failed to parse; skipping",
+                    c.name,
+                    c.id
+                ),
             }
         }
         let default_idx = default_id
             .and_then(|id| entries.iter().position(|e| e.id == id))
             .unwrap_or(0);
-        CertStore { entries, default_idx }
+        CertStore {
+            entries,
+            default_idx,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -134,8 +147,7 @@ impl TlsAccept for SniResolver {
 /// Build TLS settings that select a certificate per SNI from the live `handle`.
 pub fn sni_tls_settings(handle: CertHandle) -> Result<TlsSettings, String> {
     let cb: TlsAcceptCallbacks = Box::new(SniResolver { handle });
-    let mut settings =
-        TlsSettings::with_callbacks(cb).map_err(|e| format!("tls settings: {e}"))?;
+    let mut settings = TlsSettings::with_callbacks(cb).map_err(|e| format!("tls settings: {e}"))?;
     settings.enable_h2();
     Ok(settings)
 }

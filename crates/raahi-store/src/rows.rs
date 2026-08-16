@@ -3,16 +3,14 @@
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use raahi_core::*;
-use sqlx::sqlite::SqliteRow;
 use sqlx::Row;
+use sqlx::sqlite::SqliteRow;
 
 /// Tolerant timestamp parse: accepts RFC3339 or SQLite's `datetime()` text format.
 pub fn parse_dt(s: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(s)
         .map(|d| d.with_timezone(&Utc))
-        .or_else(|_| {
-            NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|n| n.and_utc())
-        })
+        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").map(|n| n.and_utc()))
         .unwrap_or_else(|_| Utc::now())
 }
 
@@ -79,10 +77,8 @@ pub fn map_stream_route(r: &SqliteRow) -> StreamRoute {
 pub fn map_plugin(r: &SqliteRow) -> Plugin {
     Plugin {
         id: r.get("id"),
-        plugin_type: PluginType::from_str(&r.get::<String, _>("type"))
-            .unwrap_or(PluginType::Cors),
-        scope: PluginScope::from_str(&r.get::<String, _>("scope"))
-            .unwrap_or(PluginScope::Global),
+        plugin_type: PluginType::from_str(&r.get::<String, _>("type")).unwrap_or(PluginType::Cors),
+        scope: PluginScope::from_str(&r.get::<String, _>("scope")).unwrap_or(PluginScope::Global),
         service_id: r.get("service_id"),
         route_id: r.get("route_id"),
         config: serde_json::from_str(&r.get::<String, _>("config"))

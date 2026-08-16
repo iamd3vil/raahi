@@ -5,7 +5,7 @@ use base64::Engine;
 use raahi_core::ProxyConfig;
 use serde::Deserialize;
 
-use super::{parse_query, Action, Effects, ReqInput, ShortResp};
+use super::{Action, Effects, ReqInput, ShortResp, parse_query};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -25,7 +25,12 @@ impl Default for KeyAuthCfg {
     }
 }
 
-pub fn key_auth(c: &KeyAuthCfg, input: &ReqInput, cfg: &ProxyConfig, effects: &mut Effects) -> Action {
+pub fn key_auth(
+    c: &KeyAuthCfg,
+    input: &ReqInput,
+    cfg: &ProxyConfig,
+    effects: &mut Effects,
+) -> Action {
     // Look in headers first, then query parameters.
     let mut key: Option<String> = None;
     for name in &c.key_names {
@@ -76,19 +81,25 @@ pub fn basic_auth(
     cfg: &ProxyConfig,
     effects: &mut Effects,
 ) -> Action {
-    let realm = if c.realm.is_empty() { "Raahi" } else { &c.realm };
-    let unauthorized = || {
-        ShortResp {
-            status: 401,
-            headers: vec![(
-                "www-authenticate".into(),
-                format!("Basic realm=\"{realm}\""),
-            )],
-            body: b"Raahi: unauthorized\n".to_vec(),
-        }
+    let realm = if c.realm.is_empty() {
+        "Raahi"
+    } else {
+        &c.realm
+    };
+    let unauthorized = || ShortResp {
+        status: 401,
+        headers: vec![(
+            "www-authenticate".into(),
+            format!("Basic realm=\"{realm}\""),
+        )],
+        body: b"Raahi: unauthorized\n".to_vec(),
     };
 
-    let Some(auth) = input.headers.get("authorization").and_then(|h| h.to_str().ok()) else {
+    let Some(auth) = input
+        .headers
+        .get("authorization")
+        .and_then(|h| h.to_str().ok())
+    else {
         return Action::Respond(unauthorized());
     };
     let Some(b64) = auth
@@ -212,12 +223,24 @@ pub fn jwt_auth(c: &JwtCfg, input: &ReqInput, cfg: &ProxyConfig, effects: &mut E
     };
 
     // Verify signature + registered time claims with the credential's material.
-    use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+    use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
     let (alg, dkey) = match cred.algorithm.as_str() {
-        "HS256" => (Algorithm::HS256, Ok(DecodingKey::from_secret(cred.secret.as_bytes()))),
-        "HS384" => (Algorithm::HS384, Ok(DecodingKey::from_secret(cred.secret.as_bytes()))),
-        "HS512" => (Algorithm::HS512, Ok(DecodingKey::from_secret(cred.secret.as_bytes()))),
-        "RS256" => (Algorithm::RS256, DecodingKey::from_rsa_pem(cred.secret.as_bytes())),
+        "HS256" => (
+            Algorithm::HS256,
+            Ok(DecodingKey::from_secret(cred.secret.as_bytes())),
+        ),
+        "HS384" => (
+            Algorithm::HS384,
+            Ok(DecodingKey::from_secret(cred.secret.as_bytes())),
+        ),
+        "HS512" => (
+            Algorithm::HS512,
+            Ok(DecodingKey::from_secret(cred.secret.as_bytes())),
+        ),
+        "RS256" => (
+            Algorithm::RS256,
+            DecodingKey::from_rsa_pem(cred.secret.as_bytes()),
+        ),
         _ => return jwt_reject("unsupported JWT algorithm"),
     };
     let Ok(dkey) = dkey else {
@@ -249,7 +272,7 @@ pub fn jwt_auth(c: &JwtCfg, input: &ReqInput, cfg: &ProxyConfig, effects: &mut E
 /// "virtual": named by `consumer_claim` (id 0), usable for logs and rate limiting
 /// but not for group-based ACLs.
 fn jwt_via_jwks(c: &JwtCfg, jwks_url: &str, token: &str, effects: &mut Effects) -> Action {
-    use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
+    use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 
     let Ok(header) = decode_header(token) else {
         return jwt_reject("malformed JWT");

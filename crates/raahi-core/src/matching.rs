@@ -37,9 +37,9 @@ pub fn path_matches(prefix: &str, path: &str) -> bool {
         return false;
     }
     match path.as_bytes().get(prefix.len()) {
-        None => true,        // exact match
-        Some(b'/') => true,  // boundary
-        Some(_) => false,    // e.g. "/apixyz" vs "/api"
+        None => true,       // exact match
+        Some(b'/') => true, // boundary
+        Some(_) => false,   // e.g. "/apixyz" vs "/api"
     }
 }
 

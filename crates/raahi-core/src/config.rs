@@ -3,9 +3,9 @@
 
 use std::collections::HashMap;
 
+use crate::Id;
 use crate::matching::{host_matches, path_matches};
 use crate::model::*;
-use crate::Id;
 
 /// An immutable view of all routing configuration. Wrapped in an `ArcSwap` by the
 /// data plane; rebuilt wholesale on any config change.
@@ -81,14 +81,19 @@ impl ProxyConfig {
                 continue;
             }
             if !route.methods.is_empty()
-                && !route.methods.iter().any(|m| m.eq_ignore_ascii_case(&method))
+                && !route
+                    .methods
+                    .iter()
+                    .any(|m| m.eq_ignore_ascii_case(&method))
             {
                 continue;
             }
             // Every header condition must match ("*" = present with any value).
-            if !route.headers.iter().all(|(name, want)| {
-                header(name).is_some_and(|got| want == "*" || got == *want)
-            }) {
+            if !route
+                .headers
+                .iter()
+                .all(|(name, want)| header(name).is_some_and(|got| want == "*" || got == *want))
+            {
                 continue;
             }
 
@@ -116,7 +121,11 @@ impl ProxyConfig {
                 route.priority,
                 prefix_len,
                 route.id,
-                RouteMatch { route, service, matched_prefix: prefix },
+                RouteMatch {
+                    route,
+                    service,
+                    matched_prefix: prefix,
+                },
             );
 
             best = Some(match best {
@@ -251,7 +260,9 @@ mod tests {
             ],
             vec![svc(1)],
         );
-        let m = c.match_route("h", "/api/v2/users", "GET", &no_hdrs).unwrap();
+        let m = c
+            .match_route("h", "/api/v2/users", "GET", &no_hdrs)
+            .unwrap();
         assert_eq!(m.route.id, 2);
         assert_eq!(m.matched_prefix, "/api/v2");
     }
@@ -265,7 +276,9 @@ mod tests {
             ],
             vec![svc(1)],
         );
-        let m = c.match_route("h", "/api/v2/users", "GET", &no_hdrs).unwrap();
+        let m = c
+            .match_route("h", "/api/v2/users", "GET", &no_hdrs)
+            .unwrap();
         assert_eq!(m.route.id, 1);
     }
 
@@ -275,7 +288,10 @@ mod tests {
             vec![route(1, 1, 0, &["api.example.com"], &[])],
             vec![svc(1)],
         );
-        assert!(c.match_route("api.example.com", "/x", "GET", &no_hdrs).is_some());
+        assert!(
+            c.match_route("api.example.com", "/x", "GET", &no_hdrs)
+                .is_some()
+        );
         assert!(c.match_route("other.com", "/x", "GET", &no_hdrs).is_none());
     }
 
@@ -299,9 +315,15 @@ mod tests {
         let mut r = route(1, 1, 0, &[], &["/"]);
         r.headers = [("x-version".to_string(), "beta".to_string())].into();
         let c = cfg(vec![r], vec![svc(1)]);
-        assert!(c.match_route("h", "/x", "GET", &hdrs(&[("x-version", "beta")])).is_some());
+        assert!(
+            c.match_route("h", "/x", "GET", &hdrs(&[("x-version", "beta")]))
+                .is_some()
+        );
         // Wrong value or absent header: no match.
-        assert!(c.match_route("h", "/x", "GET", &hdrs(&[("x-version", "stable")])).is_none());
+        assert!(
+            c.match_route("h", "/x", "GET", &hdrs(&[("x-version", "stable")]))
+                .is_none()
+        );
         assert!(c.match_route("h", "/x", "GET", &no_hdrs).is_none());
     }
 
@@ -310,7 +332,10 @@ mod tests {
         let mut r = route(1, 1, 0, &[], &["/"]);
         r.headers = [("x-debug".to_string(), "*".to_string())].into();
         let c = cfg(vec![r], vec![svc(1)]);
-        assert!(c.match_route("h", "/x", "GET", &hdrs(&[("x-debug", "anything")])).is_some());
+        assert!(
+            c.match_route("h", "/x", "GET", &hdrs(&[("x-debug", "anything")]))
+                .is_some()
+        );
         assert!(c.match_route("h", "/x", "GET", &no_hdrs).is_none());
     }
 
@@ -320,8 +345,14 @@ mod tests {
         r.headers = [("X-Version".to_string(), "beta".to_string())].into();
         let c = cfg(vec![r], vec![svc(1)]);
         // The lookup (like a real header map) resolves names case-insensitively.
-        assert!(c.match_route("h", "/x", "GET", &hdrs(&[("x-version", "beta")])).is_some());
+        assert!(
+            c.match_route("h", "/x", "GET", &hdrs(&[("x-version", "beta")]))
+                .is_some()
+        );
         // Values stay exact.
-        assert!(c.match_route("h", "/x", "GET", &hdrs(&[("x-version", "BETA")])).is_none());
+        assert!(
+            c.match_route("h", "/x", "GET", &hdrs(&[("x-version", "BETA")]))
+                .is_none()
+        );
     }
 }

@@ -11,8 +11,10 @@ fn tmp_db() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir()
-        .join(format!("raahi-test-{}-{seq}-{nanos}.db", std::process::id()));
+    let path = std::env::temp_dir().join(format!(
+        "raahi-test-{}-{seq}-{nanos}.db",
+        std::process::id()
+    ));
     format!("sqlite://{}", path.display())
 }
 
@@ -41,7 +43,12 @@ async fn crud_and_snapshot_roundtrip() {
         store
             .create_target(
                 svc.id,
-                &TargetSpec { host: "127.0.0.1".into(), port, weight: 100, enabled: true },
+                &TargetSpec {
+                    host: "127.0.0.1".into(),
+                    port,
+                    weight: 100,
+                    enabled: true,
+                },
             )
             .await
             .expect("create target");
@@ -67,7 +74,10 @@ async fn crud_and_snapshot_roundtrip() {
 
     // Consumer + key-auth credential.
     let consumer = store
-        .create_consumer(&ConsumerSpec { username: "alice".into(), groups: vec!["team-a".into()] })
+        .create_consumer(&ConsumerSpec {
+            username: "alice".into(),
+            groups: vec!["team-a".into()],
+        })
         .await
         .expect("create consumer");
     store
@@ -95,7 +105,9 @@ async fn crud_and_snapshot_roundtrip() {
     assert_eq!(snap.targets.get(&svc.id).map(|v| v.len()), Some(2));
     assert_eq!(snap.key_index.get("secret-key-123"), Some(&consumer.id));
 
-    let m = snap.match_route("anything", "/api/users", "GET", &|_| None).expect("route match");
+    let m = snap
+        .match_route("anything", "/api/users", "GET", &|_| None)
+        .expect("route match");
     assert_eq!(m.route.id, route.id);
     assert_eq!(m.service.id, svc.id);
     assert!(m.route.strip_path);
@@ -153,6 +165,9 @@ async fn unique_violation_maps_to_conflict() {
     };
     store.create_service(&spec).await.unwrap();
     let err = store.create_service(&spec).await.unwrap_err();
-    assert!(matches!(err, raahi_store::StoreError::Conflict(_)), "got {err:?}");
+    assert!(
+        matches!(err, raahi_store::StoreError::Conflict(_)),
+        "got {err:?}"
+    );
     let _ = std::fs::remove_file(url.trim_start_matches("sqlite://"));
 }

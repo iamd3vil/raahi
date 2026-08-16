@@ -148,17 +148,15 @@ impl Store {
         id: Id,
         t: &TargetSpec,
     ) -> Result<Option<Target>, StoreError> {
-        let res = sqlx::query(
-            "UPDATE targets SET host=?, port=?, weight=?, enabled=? WHERE id=?",
-        )
-        .bind(&t.host)
-        .bind(t.port as i64)
-        .bind(t.weight as i64)
-        .bind(t.enabled as i64)
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_err)?;
+        let res = sqlx::query("UPDATE targets SET host=?, port=?, weight=?, enabled=? WHERE id=?")
+            .bind(&t.host)
+            .bind(t.port as i64)
+            .bind(t.weight as i64)
+            .bind(t.enabled as i64)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
         if res.rows_affected() == 0 {
             return Ok(None);
         }
@@ -261,7 +259,10 @@ impl Store {
         Ok(row.as_ref().map(map_stream_route))
     }
 
-    pub async fn create_stream_route(&self, r: &StreamRouteSpec) -> Result<StreamRoute, StoreError> {
+    pub async fn create_stream_route(
+        &self,
+        r: &StreamRouteSpec,
+    ) -> Result<StreamRoute, StoreError> {
         let res = sqlx::query(
             "INSERT INTO stream_routes (name, listen_addr, service_id, enabled) VALUES (?,?,?,?)",
         )
@@ -272,7 +273,10 @@ impl Store {
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
-        Ok(self.get_stream_route(res.last_insert_rowid()).await?.unwrap())
+        Ok(self
+            .get_stream_route(res.last_insert_rowid())
+            .await?
+            .unwrap())
     }
 
     pub async fn update_stream_route(
@@ -339,7 +343,11 @@ impl Store {
         Ok(self.get_plugin(res.last_insert_rowid()).await?.unwrap())
     }
 
-    pub async fn update_plugin(&self, id: Id, p: &PluginSpec) -> Result<Option<Plugin>, StoreError> {
+    pub async fn update_plugin(
+        &self,
+        id: Id,
+        p: &PluginSpec,
+    ) -> Result<Option<Plugin>, StoreError> {
         let res = sqlx::query(
             "UPDATE plugins SET type=?, scope=?, service_id=?, route_id=?, config=?, \
              ordering=?, enabled=? WHERE id=?",
@@ -433,10 +441,11 @@ impl Store {
         &self,
         consumer_id: Id,
     ) -> Result<Vec<ConsumerCredential>, StoreError> {
-        let rows = sqlx::query("SELECT * FROM consumer_credentials WHERE consumer_id = ? ORDER BY id")
-            .bind(consumer_id)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows =
+            sqlx::query("SELECT * FROM consumer_credentials WHERE consumer_id = ? ORDER BY id")
+                .bind(consumer_id)
+                .fetch_all(&self.pool)
+                .await?;
         Ok(rows.iter().map(map_credential).collect())
     }
 
@@ -511,7 +520,10 @@ impl Store {
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
-        Ok(self.get_wasm_module(res.last_insert_rowid()).await?.unwrap())
+        Ok(self
+            .get_wasm_module(res.last_insert_rowid())
+            .await?
+            .unwrap())
     }
 
     pub async fn delete_wasm_module(&self, id: Id) -> Result<bool, StoreError> {
@@ -556,17 +568,19 @@ impl Store {
     }
 
     pub async fn create_certificate(&self, c: &CertificateSpec) -> Result<Certificate, StoreError> {
-        let res = sqlx::query(
-            "INSERT INTO certificates (name, sni, cert_pem, key_pem) VALUES (?,?,?,?)",
-        )
-        .bind(&c.name)
-        .bind(serde_json::to_string(&c.sni).unwrap())
-        .bind(&c.cert_pem)
-        .bind(&c.key_pem)
-        .execute(&self.pool)
-        .await
-        .map_err(map_err)?;
-        Ok(self.get_certificate(res.last_insert_rowid()).await?.unwrap())
+        let res =
+            sqlx::query("INSERT INTO certificates (name, sni, cert_pem, key_pem) VALUES (?,?,?,?)")
+                .bind(&c.name)
+                .bind(serde_json::to_string(&c.sni).unwrap())
+                .bind(&c.cert_pem)
+                .bind(&c.key_pem)
+                .execute(&self.pool)
+                .await
+                .map_err(map_err)?;
+        Ok(self
+            .get_certificate(res.last_insert_rowid())
+            .await?
+            .unwrap())
     }
 
     pub async fn delete_certificate(&self, id: Id) -> Result<bool, StoreError> {

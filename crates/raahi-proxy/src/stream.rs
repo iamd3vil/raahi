@@ -104,7 +104,10 @@ impl ServerApp for StreamProxyApp {
                 .iter()
                 .find(|r| r.enabled && r.listen_addr == self.listen_addr)
             else {
-                warn!("stream {}: no enabled stream route for this listener; dropping connection", self.listen_addr);
+                warn!(
+                    "stream {}: no enabled stream route for this listener; dropping connection",
+                    self.listen_addr
+                );
                 return None;
             };
             let Some(sr) = rc.services.get(&route.service_id) else {
@@ -123,7 +126,10 @@ impl ServerApp for StreamProxyApp {
             .and_then(|d| d.peer_addr().map(|a| a.to_string()))
             .unwrap_or_default();
         let Some(backend) = service_rt.select(client_key.as_bytes()) else {
-            warn!("stream {}: no backend available; dropping connection", self.listen_addr);
+            warn!(
+                "stream {}: no backend available; dropping connection",
+                self.listen_addr
+            );
             return None;
         };
         let addr = format!("{}:{}", backend.host, backend.port);
@@ -147,7 +153,10 @@ impl ServerApp for StreamProxyApp {
                 counters.bytes_down.fetch_add(down, Ordering::Relaxed);
             }
             Err(e) => {
-                warn!("stream {}: splice to {addr} ended with error: {e}", self.listen_addr);
+                warn!(
+                    "stream {}: splice to {addr} ended with error: {e}",
+                    self.listen_addr
+                );
             }
         }
         None

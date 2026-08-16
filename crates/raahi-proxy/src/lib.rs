@@ -12,14 +12,14 @@ mod stream;
 mod tls;
 
 pub use health::HealthService;
-pub use httplog::{log_channel, HttpLogService, LogEvent, LogSender};
+pub use httplog::{HttpLogService, LogEvent, LogSender, log_channel};
 pub use jwks::JwksService;
-pub use plugins::{purge_cache, validate_wasm, wat_to_wasm};
 pub use metrics::{ConsumerHit, Metrics, MetricsSnapshot, RequestRecord, RouteHit};
+pub use plugins::{purge_cache, validate_wasm, wat_to_wasm};
 pub use proxy::{Ctx, RaahiProxy};
 pub use runtime::{BackendRt, ConfigHandle, RuntimeConfig, ServiceRuntime};
-pub use stream::{stream_stats, StreamProxyApp};
-pub use tls::{sni_tls_settings, validate_cert, CertHandle, CertStore};
+pub use stream::{StreamProxyApp, stream_stats};
+pub use tls::{CertHandle, CertStore, sni_tls_settings, validate_cert};
 
 use raahi_core::ProxyConfig;
 

@@ -13,14 +13,18 @@ use pingora::services::background::background_service;
 use raahi_api::ApiService;
 use raahi_core::{RouteSpec, ServiceSpec, TargetSpec};
 use raahi_proxy::{
-    config_handle, log_channel, sni_tls_settings, CertHandle, CertStore, HttpLogService, Metrics,
-    RaahiProxy, StreamProxyApp,
+    CertHandle, CertStore, HttpLogService, Metrics, RaahiProxy, StreamProxyApp, config_handle,
+    log_channel, sni_tls_settings,
 };
 use raahi_store::Store;
 use tracing::{info, warn};
 
 #[derive(Parser, Debug)]
-#[command(name = "raahi", version, about = "Raahi — a configurable reverse proxy")]
+#[command(
+    name = "raahi",
+    version,
+    about = "Raahi — a configurable reverse proxy"
+)]
 struct Cli {
     /// SQLite database URL (created if missing).
     #[arg(long, env = "RAAHI_DB", default_value = "sqlite://raahi.db")]
@@ -74,7 +78,12 @@ async fn seed(store: &Store) -> anyhow::Result<()> {
         store
             .create_target(
                 svc.id,
-                &TargetSpec { host: "127.0.0.1".into(), port, weight: 100, enabled: true },
+                &TargetSpec {
+                    host: "127.0.0.1".into(),
+                    port,
+                    weight: 100,
+                    enabled: true,
+                },
             )
             .await?;
     }
@@ -100,8 +109,7 @@ async fn seed(store: &Store) -> anyhow::Result<()> {
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -138,7 +146,9 @@ fn main() -> anyhow::Result<()> {
     let cert_count = cert_store.len();
     let cert_handle = CertHandle::new(cert_store);
 
-    let http_addr = cli.http_addr.unwrap_or_else(|| settings.proxy_http_addr.clone());
+    let http_addr = cli
+        .http_addr
+        .unwrap_or_else(|| settings.proxy_http_addr.clone());
 
     let mut server = Server::new(None).map_err(map_pingora)?;
     server.bootstrap();
@@ -163,12 +173,16 @@ fn main() -> anyhow::Result<()> {
             match sni_tls_settings(cert_handle.clone()) {
                 Ok(settings_tls) => {
                     proxy_svc.add_tls_with_settings(https_addr, None, settings_tls);
-                    info!("proxy HTTPS (boringssl) listener on {https_addr}; {cert_count} cert(s), live per-SNI selection");
+                    info!(
+                        "proxy HTTPS (boringssl) listener on {https_addr}; {cert_count} cert(s), live per-SNI selection"
+                    );
                 }
                 Err(e) => warn!("TLS listener disabled ({https_addr}): {e}"),
             }
         } else {
-            info!("HTTPS address set but no certificates configured; HTTPS disabled (add a certificate and restart to bind the listener)");
+            info!(
+                "HTTPS address set but no certificates configured; HTTPS disabled (add a certificate and restart to bind the listener)"
+            );
         }
     }
 
@@ -189,7 +203,9 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Admin API (REST + UI) as a background service sharing the live config + metrics.
-    let admin_addr = cli.admin_addr.unwrap_or_else(|| settings.admin_addr.clone());
+    let admin_addr = cli
+        .admin_addr
+        .unwrap_or_else(|| settings.admin_addr.clone());
     let api = ApiService {
         addr: admin_addr.clone(),
         db_url: cli.db.clone(),
@@ -206,7 +222,9 @@ fn main() -> anyhow::Result<()> {
     // JWKS refresher for jwt plugins in identity-provider mode.
     server.add_service(background_service(
         "jwks",
-        raahi_proxy::JwksService { config: config.clone() },
+        raahi_proxy::JwksService {
+            config: config.clone(),
+        },
     ));
 
     // Active health checks for upstream targets.

@@ -21,7 +21,7 @@
 use std::sync::Arc;
 
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::{Action, Effects, ReqInput, RespInput, ShortResp};
 
@@ -65,12 +65,18 @@ impl WasmPlugin {
         let module = bytes.and_then(|b| match wasmi::Module::new(&engine, b.as_slice()) {
             Ok(m) => Some(m),
             Err(e) => {
-                tracing::warn!("wasm plugin: module '{}' failed to compile: {e}", cfg.module);
+                tracing::warn!(
+                    "wasm plugin: module '{}' failed to compile: {e}",
+                    cfg.module
+                );
                 None
             }
         });
         if module.is_none() {
-            tracing::warn!("wasm plugin: module '{}' unavailable; plugin is a no-op", cfg.module);
+            tracing::warn!(
+                "wasm plugin: module '{}' unavailable; plugin is a no-op",
+                cfg.module
+            );
         }
         WasmPlugin {
             engine,
@@ -173,7 +179,10 @@ impl WasmPlugin {
                         .collect()
                 })
                 .unwrap_or_default();
-            if !resp_headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("content-type")) {
+            if !resp_headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+            {
                 resp_headers.push(("content-type".into(), "text/plain; charset=utf-8".into()));
             }
             let body = out["body"].as_str().unwrap_or("").as_bytes().to_vec();

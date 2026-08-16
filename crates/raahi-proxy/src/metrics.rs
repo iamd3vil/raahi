@@ -3,8 +3,8 @@
 //! tail. A broadcast channel streams each request to SSE subscribers.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use raahi_core::Id;
 use serde::Serialize;
@@ -162,7 +162,11 @@ impl Metrics {
     pub fn snapshot(&self) -> MetricsSnapshot {
         let total = self.total.load(Ordering::Relaxed);
         let sum_us = self.latency_sum_us.load(Ordering::Relaxed);
-        let avg = if total > 0 { sum_us as f64 / 1000.0 / total as f64 } else { 0.0 };
+        let avg = if total > 0 {
+            sum_us as f64 / 1000.0 / total as f64
+        } else {
+            0.0
+        };
 
         // Percentiles over the bounded recent window.
         let (p50, p95, p99) = self
@@ -205,7 +209,10 @@ impl Metrics {
             .lock()
             .map(|h| {
                 h.iter()
-                    .map(|(c, &count)| ConsumerHit { consumer: c.clone(), count })
+                    .map(|(c, &count)| ConsumerHit {
+                        consumer: c.clone(),
+                        count,
+                    })
                     .collect()
             })
             .unwrap_or_default();

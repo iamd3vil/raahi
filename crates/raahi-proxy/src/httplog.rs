@@ -9,8 +9,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::Mutex;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::metrics::RequestRecord;
 use crate::plugins::HttpLogCfg;
@@ -34,7 +34,9 @@ pub struct HttpLogService {
 
 impl HttpLogService {
     pub fn new(rx: UnboundedReceiver<LogEvent>) -> Self {
-        HttpLogService { rx: Mutex::new(Some(rx)) }
+        HttpLogService {
+            rx: Mutex::new(Some(rx)),
+        }
     }
 }
 
@@ -67,7 +69,10 @@ async fn flush(client: &reqwest::Client, batch: &mut Batch) {
             );
         }
         Err(e) => {
-            tracing::warn!("http-log: {} failed: {e} ({count} records dropped)", batch.cfg.endpoint);
+            tracing::warn!(
+                "http-log: {} failed: {e} ({count} records dropped)",
+                batch.cfg.endpoint
+            );
         }
         Ok(_) => {}
     }

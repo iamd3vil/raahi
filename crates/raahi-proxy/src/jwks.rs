@@ -56,8 +56,17 @@ fn parse_jwks(doc: &serde_json::Value) -> HashMap<String, JwkKey> {
         let (Some(n), Some(e)) = (k["n"].as_str(), k["e"].as_str()) else {
             continue;
         };
-        let kid = k["kid"].as_str().map(String::from).unwrap_or_else(|| format!("_{i}"));
-        out.insert(kid, JwkKey { n: n.to_string(), e: e.to_string() });
+        let kid = k["kid"]
+            .as_str()
+            .map(String::from)
+            .unwrap_or_else(|| format!("_{i}"));
+        out.insert(
+            kid,
+            JwkKey {
+                n: n.to_string(),
+                e: e.to_string(),
+            },
+        );
     }
     out
 }

@@ -2,8 +2,8 @@
 //! execution (auth / rate-limit / CORS / transforms), upstream selection, path/host
 //! rewriting, and access logging. Reads the hot-swappable [`ConfigHandle`] each request.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
@@ -11,12 +11,12 @@ use bytes::Bytes;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::prelude::*;
 use pingora::{Error, ErrorType};
-use raahi_core::{strip_prefix, Id, Plugin};
+use raahi_core::{Id, Plugin, strip_prefix};
 
 use crate::httplog::{LogEvent, LogSender};
 use crate::metrics::{Metrics, RequestRecord};
 use crate::plugins::{
-    type_priority, Action, BodyTransformCfg, CacheIntent, Effects, ReqInput, RespInput, ShortResp,
+    Action, BodyTransformCfg, CacheIntent, Effects, ReqInput, RespInput, ShortResp, type_priority,
 };
 use crate::runtime::ConfigHandle;
 
@@ -95,7 +95,11 @@ async fn send_response(session: &mut Session, r: &ShortResp) -> Result<()> {
     for (k, v) in &r.headers {
         let _ = resp.insert_header(k.clone(), v.as_str());
     }
-    if !r.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("content-length")) {
+    if !r
+        .headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+    {
         let _ = resp.insert_header("content-length", r.body.len().to_string());
     }
     session.set_keepalive(None);
@@ -165,7 +169,8 @@ impl ProxyHttp for RaahiProxy {
                 if total == 0 {
                     m.service.id // no valid split entry — fall back to the route's service
                 } else {
-                    let mut n = (self.split_counter.fetch_add(1, Ordering::Relaxed) % total as usize) as u32;
+                    let mut n = (self.split_counter.fetch_add(1, Ordering::Relaxed)
+                        % total as usize) as u32;
                     let mut picked = m.service.id;
                     for sp in &valid {
                         if n < sp.weight {
@@ -190,7 +195,10 @@ impl ProxyHttp for RaahiProxy {
                 .unwrap_or(false);
             if !has_backend {
                 session
-                    .respond_error_with_body(502, Bytes::from_static(b"Raahi: no upstream backend\n"))
+                    .respond_error_with_body(
+                        502,
+                        Bytes::from_static(b"Raahi: no upstream backend\n"),
+                    )
                     .await?;
                 return Ok(true);
             }
@@ -211,7 +219,10 @@ impl ProxyHttp for RaahiProxy {
             let mut effects = Effects::default();
             let mut short = None;
             for p in &ordered {
-                match rc.plugins.run_request(p, &input, rc.data.as_ref(), &mut effects) {
+                match rc
+                    .plugins
+                    .run_request(p, &input, rc.data.as_ref(), &mut effects)
+                {
                     Action::Continue => {}
                     Action::Respond(r) => {
                         short = Some(r);
@@ -391,8 +402,13 @@ impl ProxyHttp for RaahiProxy {
                     .iter()
                     .filter_map(|(k, v)| {
                         let name = k.as_str();
-                        if ["connection", "keep-alive", "transfer-encoding", "content-length"]
-                            .contains(&name)
+                        if [
+                            "connection",
+                            "keep-alive",
+                            "transfer-encoding",
+                            "content-length",
+                        ]
+                        .contains(&name)
                         {
                             return None;
                         }
@@ -457,7 +473,11 @@ impl ProxyHttp for RaahiProxy {
             } else if end_of_stream {
                 let intent = ctx.cache_store.take().unwrap();
                 // Status is always 200 here (non-200s are disarmed in response_filter).
-                intent.store(200, std::mem::take(&mut ctx.cache_headers), std::mem::take(&mut ctx.cache_buf));
+                intent.store(
+                    200,
+                    std::mem::take(&mut ctx.cache_headers),
+                    std::mem::take(&mut ctx.cache_buf),
+                );
             }
         }
         Ok(None)

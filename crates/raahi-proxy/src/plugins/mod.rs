@@ -20,7 +20,7 @@ use raahi_core::{Id, Plugin, PluginType, ProxyConfig};
 use serde::Deserialize;
 
 pub use bodytransform::BodyTransformCfg;
-pub use cache::{purge_cache, CacheIntent};
+pub use cache::{CacheIntent, purge_cache};
 pub use wasm::{validate_wasm, wat_to_wasm};
 
 /// Read-only request inputs handed to each plugin during the request phase.
@@ -154,9 +154,9 @@ impl PluginSet {
                 PluginType::Acl => {
                     PluginInstance::Acl(serde_json::from_value(cfg()).unwrap_or_default())
                 }
-                PluginType::IpRestriction => PluginInstance::IpRestriction(
-                    serde_json::from_value(cfg()).unwrap_or_default(),
-                ),
+                PluginType::IpRestriction => {
+                    PluginInstance::IpRestriction(serde_json::from_value(cfg()).unwrap_or_default())
+                }
                 PluginType::RateLimit => {
                     // Carry over the counters when this plugin's config is unchanged.
                     let carried = prev.and_then(|ps| {

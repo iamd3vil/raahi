@@ -1,0 +1,5 @@
+extends:
+  - recommended
+rules:
+  # These three read-only endpoints have no meaningful client-error response.
+  operation-4xx-response: off

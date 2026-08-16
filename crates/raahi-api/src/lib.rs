@@ -4,14 +4,15 @@
 
 mod error;
 mod handlers;
+mod openapi;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use axum::Router;
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::Router;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
 use raahi_proxy::{CertHandle, CertStore, ConfigHandle, Metrics};
@@ -59,7 +60,10 @@ fn digest_eq(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    a.bytes()
+        .zip(b.bytes())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }
 
 /// Bearer-token auth for the admin API. Accepts `Authorization: Bearer`,
@@ -78,7 +82,10 @@ async fn require_admin(
         .headers()
         .get("authorization")
         .and_then(|h| h.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")))
+        .and_then(|v| {
+            v.strip_prefix("Bearer ")
+                .or_else(|| v.strip_prefix("bearer "))
+        })
         .map(|s| s.trim().to_string())
         .or_else(|| {
             req.headers()
@@ -88,9 +95,8 @@ async fn require_admin(
         })
         .or_else(|| {
             req.uri().query().and_then(|q| {
-                q.split('&').find_map(|kv| {
-                    kv.strip_prefix("access_token=").map(|v| v.to_string())
-                })
+                q.split('&')
+                    .find_map(|kv| kv.strip_prefix("access_token=").map(|v| v.to_string()))
             })
         });
 
@@ -114,33 +120,65 @@ pub fn build_router(state: AppState) -> Router {
             "/services/{id}",
             get(get_service).put(update_service).delete(delete_service),
         )
-        .route("/services/{id}/targets", get(list_targets).post(create_target))
-        .route("/targets/{id}", axum::routing::put(update_target).delete(delete_target))
+        .route(
+            "/services/{id}/targets",
+            get(list_targets).post(create_target),
+        )
+        .route(
+            "/targets/{id}",
+            axum::routing::put(update_target).delete(delete_target),
+        )
         .route("/routes", get(list_routes).post(create_route))
-        .route("/routes/{id}", get(get_route).put(update_route).delete(delete_route))
-        .route("/stream-routes", get(list_stream_routes).post(create_stream_route))
+        .route(
+            "/routes/{id}",
+            get(get_route).put(update_route).delete(delete_route),
+        )
+        .route(
+            "/stream-routes",
+            get(list_stream_routes).post(create_stream_route),
+        )
         .route(
             "/stream-routes/{id}",
             axum::routing::put(update_stream_route).delete(delete_stream_route),
         )
         .route("/plugins", get(list_plugins).post(create_plugin))
-        .route("/plugins/{id}", get(get_plugin).put(update_plugin).delete(delete_plugin))
+        .route(
+            "/plugins/{id}",
+            get(get_plugin).put(update_plugin).delete(delete_plugin),
+        )
         .route("/cache/purge", axum::routing::post(purge_cache))
         .route("/consumers", get(list_consumers).post(create_consumer))
         .route(
             "/consumers/{id}",
-            get(get_consumer).put(update_consumer).delete(delete_consumer),
+            get(get_consumer)
+                .put(update_consumer)
+                .delete(delete_consumer),
         )
         .route(
             "/consumers/{id}/credentials",
             get(list_credentials).post(create_credential),
         )
-        .route("/credentials/{id}", axum::routing::delete(delete_credential))
-        .route("/certificates", get(list_certificates).post(create_certificate))
-        .route("/certificates/{id}", axum::routing::delete(delete_certificate))
+        .route(
+            "/credentials/{id}",
+            axum::routing::delete(delete_credential),
+        )
+        .route(
+            "/certificates",
+            get(list_certificates).post(create_certificate),
+        )
+        .route(
+            "/certificates/{id}",
+            axum::routing::delete(delete_certificate),
+        )
         .route("/settings", get(get_settings).put(update_settings))
-        .route("/wasm-modules", get(list_wasm_modules).post(create_wasm_module))
-        .route("/wasm-modules/{id}", axum::routing::delete(delete_wasm_module))
+        .route(
+            "/wasm-modules",
+            get(list_wasm_modules).post(create_wasm_module),
+        )
+        .route(
+            "/wasm-modules/{id}",
+            axum::routing::delete(delete_wasm_module),
+        )
         .route("/metrics", get(metrics))
         .route("/requests", get(requests))
         .route("/events", get(events))
@@ -153,13 +191,18 @@ pub fn build_router(state: AppState) -> Router {
             "/admin/token",
             axum::routing::post(create_admin_token).delete(delete_admin_token),
         )
-        .layer(axum::middleware::from_fn_with_state(state.clone(), require_admin))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            require_admin,
+        ))
         // Status stays open so the UI can tell whether to show the login screen.
         .route("/admin/status", get(admin_status));
 
     let mut app = Router::new()
         .route("/healthz", get(healthz))
         .route("/metrics", get(prometheus_metrics))
+        .route("/openapi.yaml", get(openapi::spec))
+        .route("/docs", get(openapi::docs))
         .nest("/api/v1", api);
 
     // Serve the built SPA (if present) with a fallback to index.html for client routing.

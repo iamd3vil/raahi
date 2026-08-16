@@ -3,17 +3,17 @@
 
 use std::convert::Infallible;
 
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::Json;
 use raahi_core::*;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
 
 use crate::error::{ApiError, ApiResult};
-use crate::{reload, reload_certs, AppState};
+use crate::{AppState, reload, reload_certs};
 
 type Id = i64;
 
@@ -30,7 +30,11 @@ pub async fn get_service(
     State(s): State<AppState>,
     Path(id): Path<Id>,
 ) -> ApiResult<Json<Service>> {
-    s.store.get_service(id).await?.map(Json).ok_or(ApiError::NotFound)
+    s.store
+        .get_service(id)
+        .await?
+        .map(Json)
+        .ok_or(ApiError::NotFound)
 }
 
 pub async fn create_service(
@@ -47,12 +51,19 @@ pub async fn update_service(
     Path(id): Path<Id>,
     Json(spec): Json<ServiceSpec>,
 ) -> ApiResult<Json<Service>> {
-    let svc = s.store.update_service(id, &spec).await?.ok_or(ApiError::NotFound)?;
+    let svc = s
+        .store
+        .update_service(id, &spec)
+        .await?
+        .ok_or(ApiError::NotFound)?;
     reload(&s).await?;
     Ok(Json(svc))
 }
 
-pub async fn delete_service(State(s): State<AppState>, Path(id): Path<Id>) -> ApiResult<Json<Value>> {
+pub async fn delete_service(
+    State(s): State<AppState>,
+    Path(id): Path<Id>,
+) -> ApiResult<Json<Value>> {
     if !s.store.delete_service(id).await? {
         return Err(ApiError::NotFound);
     }
@@ -83,12 +94,19 @@ pub async fn update_target(
     Path(id): Path<Id>,
     Json(spec): Json<TargetSpec>,
 ) -> ApiResult<Json<Target>> {
-    let t = s.store.update_target(id, &spec).await?.ok_or(ApiError::NotFound)?;
+    let t = s
+        .store
+        .update_target(id, &spec)
+        .await?
+        .ok_or(ApiError::NotFound)?;
     reload(&s).await?;
     Ok(Json(t))
 }
 
-pub async fn delete_target(State(s): State<AppState>, Path(id): Path<Id>) -> ApiResult<Json<Value>> {
+pub async fn delete_target(
+    State(s): State<AppState>,
+    Path(id): Path<Id>,
+) -> ApiResult<Json<Value>> {
     if !s.store.delete_target(id).await? {
         return Err(ApiError::NotFound);
     }
@@ -102,7 +120,11 @@ pub async fn list_routes(State(s): State<AppState>) -> ApiResult<Json<Vec<Route>
 }
 
 pub async fn get_route(State(s): State<AppState>, Path(id): Path<Id>) -> ApiResult<Json<Route>> {
-    s.store.get_route(id).await?.map(Json).ok_or(ApiError::NotFound)
+    s.store
+        .get_route(id)
+        .await?
+        .map(Json)
+        .ok_or(ApiError::NotFound)
 }
 
 pub async fn create_route(
@@ -121,7 +143,11 @@ pub async fn update_route(
     Json(spec): Json<RouteSpec>,
 ) -> ApiResult<Json<Route>> {
     ensure_split_services_exist(&s, &spec).await?;
-    let r = s.store.update_route(id, &spec).await?.ok_or(ApiError::NotFound)?;
+    let r = s
+        .store
+        .update_route(id, &spec)
+        .await?
+        .ok_or(ApiError::NotFound)?;
     reload(&s).await?;
     Ok(Json(r))
 }
@@ -199,8 +225,16 @@ pub async fn update_stream_route(
     Json(spec): Json<StreamRouteSpec>,
 ) -> ApiResult<Json<Value>> {
     validate_stream_route(&s, &spec).await?;
-    let prev = s.store.get_stream_route(id).await?.ok_or(ApiError::NotFound)?;
-    let r = s.store.update_stream_route(id, &spec).await?.ok_or(ApiError::NotFound)?;
+    let prev = s
+        .store
+        .get_stream_route(id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let r = s
+        .store
+        .update_stream_route(id, &spec)
+        .await?
+        .ok_or(ApiError::NotFound)?;
     reload(&s).await?;
     let mut out = json!(r);
     if prev.listen_addr != r.listen_addr {
@@ -226,7 +260,11 @@ pub async fn list_plugins(State(s): State<AppState>) -> ApiResult<Json<Vec<Plugi
 }
 
 pub async fn get_plugin(State(s): State<AppState>, Path(id): Path<Id>) -> ApiResult<Json<Plugin>> {
-    s.store.get_plugin(id).await?.map(Json).ok_or(ApiError::NotFound)
+    s.store
+        .get_plugin(id)
+        .await?
+        .map(Json)
+        .ok_or(ApiError::NotFound)
 }
 
 pub async fn create_plugin(
@@ -247,7 +285,11 @@ pub async fn update_plugin(
 ) -> ApiResult<Json<Plugin>> {
     validate_plugin(&spec)?;
     ensure_wasm_module_exists(&s, &spec).await?;
-    let p = s.store.update_plugin(id, &spec).await?.ok_or(ApiError::NotFound)?;
+    let p = s
+        .store
+        .update_plugin(id, &spec)
+        .await?
+        .ok_or(ApiError::NotFound)?;
     reload(&s).await?;
     Ok(Json(p))
 }
@@ -258,14 +300,24 @@ async fn ensure_wasm_module_exists(s: &AppState, spec: &PluginSpec) -> ApiResult
         return Ok(());
     }
     let name = spec.config["module"].as_str().unwrap_or("");
-    let exists = s.store.list_wasm_modules().await?.iter().any(|m| m.name == name);
+    let exists = s
+        .store
+        .list_wasm_modules()
+        .await?
+        .iter()
+        .any(|m| m.name == name);
     if !exists {
-        return Err(ApiError::BadRequest(format!("wasm module '{name}' not found")));
+        return Err(ApiError::BadRequest(format!(
+            "wasm module '{name}' not found"
+        )));
     }
     Ok(())
 }
 
-pub async fn delete_plugin(State(s): State<AppState>, Path(id): Path<Id>) -> ApiResult<Json<Value>> {
+pub async fn delete_plugin(
+    State(s): State<AppState>,
+    Path(id): Path<Id>,
+) -> ApiResult<Json<Value>> {
     if !s.store.delete_plugin(id).await? {
         return Err(ApiError::NotFound);
     }
@@ -276,10 +328,14 @@ pub async fn delete_plugin(State(s): State<AppState>, Path(id): Path<Id>) -> Api
 fn validate_plugin(spec: &PluginSpec) -> ApiResult<()> {
     match spec.scope {
         PluginScope::Service if spec.service_id.is_none() => {
-            return Err(ApiError::BadRequest("service-scoped plugin needs service_id".into()));
+            return Err(ApiError::BadRequest(
+                "service-scoped plugin needs service_id".into(),
+            ));
         }
         PluginScope::Route if spec.route_id.is_none() => {
-            return Err(ApiError::BadRequest("route-scoped plugin needs route_id".into()));
+            return Err(ApiError::BadRequest(
+                "route-scoped plugin needs route_id".into(),
+            ));
         }
         _ => {}
     }
@@ -302,8 +358,12 @@ fn validate_plugin(spec: &PluginSpec) -> ApiResult<()> {
             }
         }
         PluginType::IpRestriction => {
-            let both_empty = spec.config["allow"].as_array().map_or(true, |a| a.is_empty())
-                && spec.config["deny"].as_array().map_or(true, |a| a.is_empty());
+            let both_empty = spec.config["allow"]
+                .as_array()
+                .map_or(true, |a| a.is_empty())
+                && spec.config["deny"]
+                    .as_array()
+                    .map_or(true, |a| a.is_empty());
             if both_empty {
                 return Err(ApiError::BadRequest(
                     "ip-restriction needs at least one allow or deny entry".into(),
@@ -319,11 +379,15 @@ fn validate_plugin(spec: &PluginSpec) -> ApiResult<()> {
         }
         PluginType::ProxyCache => {
             if spec.config["ttl_secs"].as_u64().unwrap_or(60) < 1 {
-                return Err(ApiError::BadRequest("proxy-cache needs ttl_secs >= 1".into()));
+                return Err(ApiError::BadRequest(
+                    "proxy-cache needs ttl_secs >= 1".into(),
+                ));
             }
         }
         PluginType::ResponseBodyTransform => {
-            let empty = spec.config["replace"].as_array().map_or(true, |a| a.is_empty());
+            let empty = spec.config["replace"]
+                .as_array()
+                .map_or(true, |a| a.is_empty());
             if empty {
                 return Err(ApiError::BadRequest(
                     "response-body-transform needs at least one replace entry".into(),
@@ -349,7 +413,11 @@ pub async fn get_consumer(
     State(s): State<AppState>,
     Path(id): Path<Id>,
 ) -> ApiResult<Json<Consumer>> {
-    s.store.get_consumer(id).await?.map(Json).ok_or(ApiError::NotFound)
+    s.store
+        .get_consumer(id)
+        .await?
+        .map(Json)
+        .ok_or(ApiError::NotFound)
 }
 
 pub async fn create_consumer(
@@ -366,12 +434,19 @@ pub async fn update_consumer(
     Path(id): Path<Id>,
     Json(spec): Json<ConsumerSpec>,
 ) -> ApiResult<Json<Consumer>> {
-    let c = s.store.update_consumer(id, &spec).await?.ok_or(ApiError::NotFound)?;
+    let c = s
+        .store
+        .update_consumer(id, &spec)
+        .await?
+        .ok_or(ApiError::NotFound)?;
     reload(&s).await?;
     Ok(Json(c))
 }
 
-pub async fn delete_consumer(State(s): State<AppState>, Path(id): Path<Id>) -> ApiResult<Json<Value>> {
+pub async fn delete_consumer(
+    State(s): State<AppState>,
+    Path(id): Path<Id>,
+) -> ApiResult<Json<Value>> {
     if !s.store.delete_consumer(id).await? {
         return Err(ApiError::NotFound);
     }
@@ -396,10 +471,9 @@ pub async fn create_credential(
     // jwt stores its verification material as a JSON blob (needed raw to verify).
     let stored = match spec.credential_type {
         CredentialType::BasicAuth => {
-            let pw = spec
-                .secret
-                .as_deref()
-                .ok_or_else(|| ApiError::BadRequest("basic-auth credential needs a secret".into()))?;
+            let pw = spec.secret.as_deref().ok_or_else(|| {
+                ApiError::BadRequest("basic-auth credential needs a secret".into())
+            })?;
             Some(
                 bcrypt::hash(pw, bcrypt::DEFAULT_COST)
                     .map_err(|e| ApiError::Internal(format!("hash: {e}")))?,
@@ -428,13 +502,21 @@ pub async fn create_credential(
     };
     let cred = s
         .store
-        .create_credential(consumer_id, spec.credential_type, &spec.identifier, stored.as_deref())
+        .create_credential(
+            consumer_id,
+            spec.credential_type,
+            &spec.identifier,
+            stored.as_deref(),
+        )
         .await?;
     reload(&s).await?;
     Ok(Json(cred))
 }
 
-pub async fn delete_credential(State(s): State<AppState>, Path(id): Path<Id>) -> ApiResult<Json<Value>> {
+pub async fn delete_credential(
+    State(s): State<AppState>,
+    Path(id): Path<Id>,
+) -> ApiResult<Json<Value>> {
     if !s.store.delete_credential(id).await? {
         return Err(ApiError::NotFound);
     }
@@ -445,16 +527,17 @@ pub async fn delete_credential(State(s): State<AppState>, Path(id): Path<Id>) ->
 // ---- wasm modules --------------------------------------------------------------
 pub async fn list_wasm_modules(State(s): State<AppState>) -> ApiResult<Json<Value>> {
     let mods = s.store.list_wasm_modules().await?;
-    Ok(Json(json!(mods
-        .iter()
-        .map(|m| json!({
-            "id": m.id,
-            "name": m.name,
-            "description": m.description,
-            "size_bytes": m.wasm.len(),
-            "created_at": m.created_at,
-        }))
-        .collect::<Vec<_>>())))
+    Ok(Json(json!(
+        mods.iter()
+            .map(|m| json!({
+                "id": m.id,
+                "name": m.name,
+                "description": m.description,
+                "size_bytes": m.wasm.len(),
+                "created_at": m.created_at,
+            }))
+            .collect::<Vec<_>>()
+    )))
 }
 
 pub async fn create_wasm_module(
@@ -478,7 +561,7 @@ pub async fn create_wasm_module(
         _ => {
             return Err(ApiError::BadRequest(
                 "provide the module as wasm_base64 or wat".into(),
-            ))
+            ));
         }
     };
     // Compile-check + ABI check before storing.
@@ -535,7 +618,10 @@ pub async fn create_certificate(
     Ok(Json(c))
 }
 
-pub async fn delete_certificate(State(s): State<AppState>, Path(id): Path<Id>) -> ApiResult<Json<Value>> {
+pub async fn delete_certificate(
+    State(s): State<AppState>,
+    Path(id): Path<Id>,
+) -> ApiResult<Json<Value>> {
     if !s.store.delete_certificate(id).await? {
         return Err(ApiError::NotFound);
     }
@@ -611,10 +697,7 @@ fn default_limit() -> usize {
     100
 }
 
-pub async fn requests(
-    State(s): State<AppState>,
-    Query(q): Query<RequestsQuery>,
-) -> Json<Value> {
+pub async fn requests(State(s): State<AppState>, Query(q): Query<RequestsQuery>) -> Json<Value> {
     Json(json!(s.metrics.recent(q.limit.min(500))))
 }
 
@@ -684,7 +767,10 @@ pub async fn prometheus_metrics(State(s): State<AppState>) -> impl axum::respons
     }
     m("# HELP raahi_request_latency_avg_ms Mean request latency (all-time).".into());
     m("# TYPE raahi_request_latency_avg_ms gauge".into());
-    m(format!("raahi_request_latency_avg_ms {}", snap.avg_latency_ms));
+    m(format!(
+        "raahi_request_latency_avg_ms {}",
+        snap.avg_latency_ms
+    ));
 
     // Samples of one metric family must stay contiguous in the exposition format.
     m("# HELP raahi_route_requests_total Requests per route.".into());
@@ -745,7 +831,10 @@ pub async fn prometheus_metrics(State(s): State<AppState>) -> impl axum::respons
 
     // Stream (L4) listeners. Each family's samples stay contiguous.
     let stream = raahi_proxy::stream_stats();
-    m("# HELP raahi_stream_connections_total TCP connections accepted per stream listener.".into());
+    m(
+        "# HELP raahi_stream_connections_total TCP connections accepted per stream listener."
+            .into(),
+    );
     m("# TYPE raahi_stream_connections_total counter".into());
     for (listener, conns, _, _) in &stream {
         m(format!(
@@ -771,7 +860,10 @@ pub async fn prometheus_metrics(State(s): State<AppState>) -> impl axum::respons
     m(format!("raahi_config_version {}", rc.data.version));
 
     (
-        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
         out,
     )
 }
@@ -842,7 +934,10 @@ pub async fn router_test(
             .map(|(_, v)| v.clone())
     };
     let rc = s.config.load();
-    match rc.data.match_route(&q.host, &q.path, &q.method.to_uppercase(), &header) {
+    match rc
+        .data
+        .match_route(&q.host, &q.path, &q.method.to_uppercase(), &header)
+    {
         Some(m) => {
             let plugins: Vec<&str> = {
                 let mut ordered = rc.data.plugins_for(m.route.id, m.service.id);
@@ -986,7 +1081,10 @@ pub async fn import_config(
         );
         if !key.is_empty() {
             raahi_proxy::validate_cert(cert, key).map_err(|e| {
-                ApiError::BadRequest(format!("certificate '{}': {e}", cv["name"].as_str().unwrap_or("?")))
+                ApiError::BadRequest(format!(
+                    "certificate '{}': {e}",
+                    cv["name"].as_str().unwrap_or("?")
+                ))
             })?;
         }
     }

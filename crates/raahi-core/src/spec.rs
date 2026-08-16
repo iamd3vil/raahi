@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::*;
 use crate::Id;
+use crate::model::*;
 
 fn d_http() -> Protocol {
     Protocol::Http

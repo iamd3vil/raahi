@@ -104,7 +104,11 @@ pub fn ip_restriction(c: &IpRestrictionCfg, input: &ReqInput) -> Action {
     let Some(ip) = input.client_ip.and_then(|s| s.parse::<IpAddr>().ok()) else {
         // No usable client address (e.g. unix socket): fail closed only if an
         // allowlist is configured.
-        return if c.allow.is_empty() { Action::Continue } else { reject() };
+        return if c.allow.is_empty() {
+            Action::Continue
+        } else {
+            reject()
+        };
     };
 
     if c.deny.iter().any(|p| cidr_contains(p, ip)) {

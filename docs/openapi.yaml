@@ -1,0 +1,1352 @@
+openapi: 3.0.3
+info:
+  title: Raahi Admin API
+  version: 0.1.0
+  description: |
+    Control plane for Raahi's reverse-proxy configuration and runtime state.
+
+    All configuration mutations are persisted and hot-reloaded before the response is
+    returned. PUT operations are full replacements, not patches. Authentication is
+    optional until an admin token is generated; when enabled, use either bearer auth or
+    `X-Admin-Token`. Successful creates and deletes return HTTP 200.
+  license:
+    name: MIT
+    url: https://opensource.org/license/mit
+servers:
+  - url: /
+    description: The Raahi admin listener serving this contract
+tags:
+  - name: System
+    description: Open liveness, discovery, and Prometheus endpoints.
+  - name: Admin authentication
+    description: Admin-token status, generation, rotation, and disablement.
+  - name: Services
+    description: Logical upstreams and their shared transport settings.
+  - name: Targets
+    description: Concrete upstream hosts belonging to services.
+  - name: Routes
+    description: HTTP request matching and service selection.
+  - name: Stream routes
+    description: Raw TCP listeners proxied to services.
+  - name: Plugins
+    description: Traffic policies scoped globally, to services, or to routes.
+  - name: Consumers
+    description: Authenticated identities and ACL groups.
+  - name: Credentials
+    description: Consumer API-key, Basic-auth, and JWT credentials.
+  - name: Certificates
+    description: TLS certificate chains and SNI selection.
+  - name: Settings
+    description: Singleton listener and load-balancing settings.
+  - name: WASM modules
+    description: Uploaded, validated user plugin modules.
+  - name: Observability
+    description: Traffic metrics, request events, health, and route diagnostics.
+  - name: Configuration
+    description: Full configuration backup and restore.
+security:
+  - AdminBearer: []
+  - AdminTokenHeader: []
+paths:
+  /healthz:
+    get:
+      tags: [System]
+      summary: Check whether the admin HTTP server is running
+      operationId: getHealthz
+      security: []
+      responses:
+        '200':
+          description: The literal string `ok`.
+          content:
+            text/plain:
+              schema: {type: string, enum: [ok]}
+  /metrics:
+    get:
+      tags: [System]
+      summary: Get Prometheus metrics
+      operationId: getPrometheusMetrics
+      security: []
+      responses:
+        '200':
+          description: Prometheus text exposition.
+          content:
+            text/plain:
+              schema: {type: string}
+  /api/v1/admin/status:
+    get:
+      tags: [Admin authentication]
+      summary: Check whether admin authentication is enabled
+      operationId: getAdminStatus
+      security: []
+      responses:
+        '200':
+          description: Authentication status.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdminStatus'}
+  /api/v1/admin/token:
+    post:
+      tags: [Admin authentication]
+      summary: Generate or rotate the admin token
+      description: The plaintext token is returned exactly once. If auth is already enabled, authenticate this request with the current token.
+      operationId: createAdminToken
+      responses:
+        '200':
+          description: Newly generated token.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdminToken'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    delete:
+      tags: [Admin authentication]
+      summary: Disable admin authentication
+      operationId: deleteAdminToken
+      responses:
+        '200':
+          description: Authentication is disabled.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdminStatus'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/services:
+    get:
+      tags: [Services]
+      summary: List services
+      operationId: listServices
+      responses:
+        '200':
+          description: Services ordered by ID.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Service'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    post:
+      tags: [Services]
+      summary: Create a service
+      operationId: createService
+      requestBody: {$ref: '#/components/requestBodies/ServiceInput'}
+      responses:
+        '200':
+          description: Created service.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Service'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/services/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Services]
+      summary: Get a service
+      operationId: getService
+      responses:
+        '200':
+          description: Service.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Service'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    put:
+      tags: [Services]
+      summary: Replace a service
+      description: Full replacement; omitted optional fields reset to their defaults.
+      operationId: updateService
+      requestBody: {$ref: '#/components/requestBodies/ServiceInput'}
+      responses:
+        '200':
+          description: Updated service.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Service'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    delete:
+      tags: [Services]
+      summary: Delete a service
+      description: Also removes dependent targets, routes, stream routes, and plugins.
+      operationId: deleteService
+      responses:
+        '200': {$ref: '#/components/responses/Deleted'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/services/{service_id}/targets:
+    parameters:
+      - $ref: '#/components/parameters/ServiceId'
+    get:
+      tags: [Targets]
+      summary: List a service's targets
+      description: Returns an empty array when the parent service does not exist.
+      operationId: listServiceTargets
+      responses:
+        '200':
+          description: Targets ordered by ID.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Target'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    post:
+      tags: [Targets]
+      summary: Add a target to a service
+      operationId: createTarget
+      requestBody: {$ref: '#/components/requestBodies/TargetInput'}
+      responses:
+        '200':
+          description: Created target.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Target'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/targets/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    put:
+      tags: [Targets]
+      summary: Replace a target
+      operationId: updateTarget
+      requestBody: {$ref: '#/components/requestBodies/TargetInput'}
+      responses:
+        '200':
+          description: Updated target.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Target'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    delete:
+      tags: [Targets]
+      summary: Delete a target
+      operationId: deleteTarget
+      responses:
+        '200': {$ref: '#/components/responses/Deleted'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/routes:
+    get:
+      tags: [Routes]
+      summary: List HTTP routes
+      operationId: listRoutes
+      responses:
+        '200':
+          description: Routes ordered by ID.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Route'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    post:
+      tags: [Routes]
+      summary: Create an HTTP route
+      operationId: createRoute
+      requestBody: {$ref: '#/components/requestBodies/RouteInput'}
+      responses:
+        '200':
+          description: Created route.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Route'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/routes/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Routes]
+      summary: Get an HTTP route
+      operationId: getRoute
+      responses:
+        '200':
+          description: Route.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Route'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    put:
+      tags: [Routes]
+      summary: Replace an HTTP route
+      operationId: updateRoute
+      requestBody: {$ref: '#/components/requestBodies/RouteInput'}
+      responses:
+        '200':
+          description: Updated route.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Route'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    delete:
+      tags: [Routes]
+      summary: Delete an HTTP route
+      operationId: deleteRoute
+      responses:
+        '200': {$ref: '#/components/responses/Deleted'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/stream-routes:
+    get:
+      tags: [Stream routes]
+      summary: List L4 stream routes
+      operationId: listStreamRoutes
+      responses:
+        '200':
+          description: Stream routes ordered by ID.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/StreamRoute'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    post:
+      tags: [Stream routes]
+      summary: Create an L4 stream route
+      description: The listener is persisted immediately but must be bound by restarting Raahi.
+      operationId: createStreamRoute
+      requestBody: {$ref: '#/components/requestBodies/StreamRouteInput'}
+      responses:
+        '200':
+          description: Created route with a restart note.
+          content: {application/json: {schema: {$ref: '#/components/schemas/StreamRouteResult'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/stream-routes/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    put:
+      tags: [Stream routes]
+      summary: Replace an L4 stream route
+      description: Retargeting applies live. Changing `listen_addr` requires a restart and adds `note` to the response.
+      operationId: updateStreamRoute
+      requestBody: {$ref: '#/components/requestBodies/StreamRouteInput'}
+      responses:
+        '200':
+          description: Updated stream route, optionally with a restart note.
+          content: {application/json: {schema: {$ref: '#/components/schemas/StreamRouteResult'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    delete:
+      tags: [Stream routes]
+      summary: Delete an L4 stream route
+      description: Restart Raahi to unbind the listener.
+      operationId: deleteStreamRoute
+      responses:
+        '200':
+          description: Deletion result with a restart note.
+          content: {application/json: {schema: {$ref: '#/components/schemas/StreamRouteDeleteResult'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/plugins:
+    get:
+      tags: [Plugins]
+      summary: List plugins
+      operationId: listPlugins
+      responses:
+        '200':
+          description: Plugins ordered by ordering then ID.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Plugin'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    post:
+      tags: [Plugins]
+      summary: Create a plugin
+      operationId: createPlugin
+      requestBody: {$ref: '#/components/requestBodies/PluginInput'}
+      responses:
+        '200':
+          description: Created plugin.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Plugin'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/plugins/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Plugins]
+      summary: Get a plugin
+      operationId: getPlugin
+      responses:
+        '200':
+          description: Plugin.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Plugin'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    put:
+      tags: [Plugins]
+      summary: Replace a plugin
+      operationId: updatePlugin
+      requestBody: {$ref: '#/components/requestBodies/PluginInput'}
+      responses:
+        '200':
+          description: Updated plugin.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Plugin'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    delete:
+      tags: [Plugins]
+      summary: Delete a plugin
+      operationId: deletePlugin
+      responses:
+        '200': {$ref: '#/components/responses/Deleted'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/cache/purge:
+    post:
+      tags: [Plugins]
+      summary: Purge all in-memory proxy-cache entries
+      operationId: purgeProxyCache
+      responses:
+        '200':
+          description: Number of entries removed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PurgeResult'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /api/v1/consumers:
+    get:
+      tags: [Consumers]
+      summary: List consumers
+      operationId: listConsumers
+      responses:
+        '200':
+          description: Consumers ordered by ID.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Consumer'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    post:
+      tags: [Consumers]
+      summary: Create a consumer
+      operationId: createConsumer
+      requestBody: {$ref: '#/components/requestBodies/ConsumerInput'}
+      responses:
+        '200':
+          description: Created consumer.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Consumer'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/consumers/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Consumers]
+      summary: Get a consumer
+      operationId: getConsumer
+      responses:
+        '200':
+          description: Consumer.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Consumer'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    put:
+      tags: [Consumers]
+      summary: Replace a consumer
+      operationId: updateConsumer
+      requestBody: {$ref: '#/components/requestBodies/ConsumerInput'}
+      responses:
+        '200':
+          description: Updated consumer.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Consumer'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    delete:
+      tags: [Consumers]
+      summary: Delete a consumer and its credentials
+      operationId: deleteConsumer
+      responses:
+        '200': {$ref: '#/components/responses/Deleted'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/consumers/{consumer_id}/credentials:
+    parameters:
+      - $ref: '#/components/parameters/ConsumerId'
+    get:
+      tags: [Credentials]
+      summary: List a consumer's credentials
+      description: Secrets are never included. A missing parent returns an empty array.
+      operationId: listConsumerCredentials
+      responses:
+        '200':
+          description: Redacted credentials.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Credential'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    post:
+      tags: [Credentials]
+      summary: Create a credential
+      description: Basic-auth and JWT secrets are accepted but never returned.
+      operationId: createCredential
+      requestBody: {$ref: '#/components/requestBodies/CredentialInput'}
+      responses:
+        '200':
+          description: Created credential with its secret redacted.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Credential'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/credentials/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    delete:
+      tags: [Credentials]
+      summary: Delete a credential
+      operationId: deleteCredential
+      responses:
+        '200': {$ref: '#/components/responses/Deleted'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/certificates:
+    get:
+      tags: [Certificates]
+      summary: List TLS certificates
+      description: Private keys are never returned.
+      operationId: listCertificates
+      responses:
+        '200':
+          description: Certificates with private keys redacted.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/Certificate'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    post:
+      tags: [Certificates]
+      summary: Add a TLS certificate
+      operationId: createCertificate
+      requestBody: {$ref: '#/components/requestBodies/CertificateInput'}
+      responses:
+        '200':
+          description: Created certificate without its private key.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Certificate'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/certificates/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    delete:
+      tags: [Certificates]
+      summary: Delete a TLS certificate
+      operationId: deleteCertificate
+      responses:
+        '200': {$ref: '#/components/responses/Deleted'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/settings:
+    get:
+      tags: [Settings]
+      summary: Get global settings
+      operationId: getSettings
+      responses:
+        '200':
+          description: Current settings.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Settings'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    put:
+      tags: [Settings]
+      summary: Replace global settings
+      description: Listener-address changes may require a restart because listeners bind at startup.
+      operationId: updateSettings
+      requestBody: {$ref: '#/components/requestBodies/SettingsInput'}
+      responses:
+        '200':
+          description: Updated settings.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Settings'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/wasm-modules:
+    get:
+      tags: [WASM modules]
+      summary: List uploaded WASM modules
+      description: Module bytes are never returned.
+      operationId: listWasmModules
+      responses:
+        '200':
+          description: WASM module metadata.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/WasmModule'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    post:
+      tags: [WASM modules]
+      summary: Upload and validate a WASM module
+      description: Supply a non-empty `wasm_base64` or `wat`. When both are present, `wasm_base64` takes precedence.
+      operationId: createWasmModule
+      requestBody: {$ref: '#/components/requestBodies/WasmModuleInput'}
+      responses:
+        '200':
+          description: Created module metadata.
+          content: {application/json: {schema: {$ref: '#/components/schemas/WasmModule'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/wasm-modules/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    delete:
+      tags: [WASM modules]
+      summary: Delete a WASM module
+      description: Fails while a WASM plugin references the module by name.
+      operationId: deleteWasmModule
+      responses:
+        '200': {$ref: '#/components/responses/Deleted'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/metrics:
+    get:
+      tags: [Observability]
+      summary: Get JSON traffic metrics
+      operationId: getMetrics
+      responses:
+        '200':
+          description: In-memory metrics snapshot.
+          content: {application/json: {schema: {$ref: '#/components/schemas/MetricsSnapshot'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /api/v1/requests:
+    get:
+      tags: [Observability]
+      summary: List recent completed requests
+      description: Newest first from an in-memory ring buffer containing at most 500 records.
+      operationId: listRecentRequests
+      parameters:
+        - name: limit
+          in: query
+          description: Requested record count. Values over 500 are clamped to 500.
+          schema: {type: integer, minimum: 0, maximum: 500, default: 100}
+      responses:
+        '200':
+          description: Recent requests.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/RequestRecord'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /api/v1/events:
+    get:
+      tags: [Observability]
+      summary: Stream completed requests with server-sent events
+      description: Each data event is a JSON RequestRecord. Query-token auth is supported for browser EventSource, but URLs may be logged.
+      operationId: streamRequestEvents
+      security:
+        - AdminBearer: []
+        - AdminTokenHeader: []
+        - EventAccessToken: []
+      responses:
+        '200':
+          description: Never-ending SSE stream with keep-alives. Lagging clients may lose events.
+          content:
+            text/event-stream:
+              schema: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /api/v1/config:
+    get:
+      tags: [Observability]
+      summary: Get live compiled-config counts and version
+      operationId: getConfigSummary
+      responses:
+        '200':
+          description: Snapshot summary.
+          content: {application/json: {schema: {$ref: '#/components/schemas/ConfigSummary'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /api/v1/health:
+    get:
+      tags: [Observability]
+      summary: Get live upstream target health
+      operationId: listTargetHealth
+      responses:
+        '200':
+          description: Health for each compiled target.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/TargetHealth'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /api/v1/router/test:
+    get:
+      tags: [Observability]
+      summary: Dry-run HTTP route matching
+      operationId: testRouter
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema: {type: string, example: /orders/42}
+        - name: host
+          in: query
+          schema: {type: string, default: '', example: api.example.com}
+        - name: method
+          in: query
+          schema: {type: string, default: GET, example: GET}
+        - name: headers
+          in: query
+          description: Comma-separated `Name:value` pairs.
+          schema: {type: string, example: 'X-Region:in,X-Version:v2'}
+      responses:
+        '200':
+          description: Match result.
+          content: {application/json: {schema: {$ref: '#/components/schemas/RouterTestResult'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /api/v1/export:
+    get:
+      tags: [Configuration]
+      summary: Export the complete configuration
+      description: Setting `include_secrets=true` creates a sensitive restorable backup containing private keys and stored credential material.
+      operationId: exportConfiguration
+      parameters:
+        - name: include_secrets
+          in: query
+          schema: {type: boolean, default: false}
+      responses:
+        '200':
+          description: Export document. Secret fields may be omitted depending on the query.
+          content: {application/json: {schema: {$ref: '#/components/schemas/ExportDocument'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/import:
+    post:
+      tags: [Configuration]
+      summary: Replace configuration from an export document
+      description: Destructive transactional full replacement with ID remapping. Take an export first. The admin token is not replaced.
+      operationId: importConfiguration
+      requestBody: {$ref: '#/components/requestBodies/ImportDocument'}
+      responses:
+        '200':
+          description: Counts restored plus skipped items and reasons.
+          content: {application/json: {schema: {$ref: '#/components/schemas/ImportReport'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+components:
+  securitySchemes:
+    AdminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: Raahi admin token
+      description: Optional until a token is generated.
+    AdminTokenHeader:
+      type: apiKey
+      in: header
+      name: X-Admin-Token
+      description: Alternative to the Authorization bearer header.
+    EventAccessToken:
+      type: apiKey
+      in: query
+      name: access_token
+      description: SSE-only fallback for browser EventSource clients. Prefer headers elsewhere.
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Id'}
+    ServiceId:
+      name: service_id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Id'}
+    ConsumerId:
+      name: consumer_id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Id'}
+  requestBodies:
+    ServiceInput:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/ServiceInput'}}}
+    TargetInput:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/TargetInput'}}}
+    RouteInput:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/RouteInput'}}}
+    StreamRouteInput:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/StreamRouteInput'}}}
+    PluginInput:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/PluginInput'}}}
+    ConsumerInput:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/ConsumerInput'}}}
+    CredentialInput:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/CredentialInput'}}}
+    CertificateInput:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/CertificateInput'}}}
+    SettingsInput:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/SettingsInput'}}}
+    WasmModuleInput:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/WasmModuleInput'}}}
+    ImportDocument:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/ImportDocument'}}}
+  responses:
+    Deleted:
+      description: Resource deleted.
+      content: {application/json: {schema: {$ref: '#/components/schemas/DeleteResult'}}}
+    BadRequest:
+      description: Validation, conflict, foreign-key, or malformed-input error.
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    Unauthorized:
+      description: Admin auth is enabled and the token is missing or invalid.
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    NotFound:
+      description: Resource not found.
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    InternalError:
+      description: Internal storage or server error.
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  schemas:
+    Id:
+      type: integer
+      format: int64
+      minimum: 1
+      example: 42
+    Timestamp:
+      type: string
+      format: date-time
+      example: '2026-08-16T09:30:00Z'
+    Protocol:
+      type: string
+      enum: [http, https]
+    LoadBalancingAlgorithm:
+      type: string
+      enum: [round_robin, random, consistent, weighted]
+    PluginType:
+      type: string
+      enum: [key-auth, basic-auth, jwt, acl, ip-restriction, rate-limit, proxy-cache, request-size-limit, request-termination, redirect, cors, wasm, request-transform, response-transform, response-body-transform, http-log]
+    PluginScope:
+      type: string
+      enum: [global, service, route]
+    CredentialType:
+      type: string
+      enum: [key-auth, basic-auth, jwt]
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string, example: not found}
+    DeleteResult:
+      type: object
+      required: [deleted]
+      properties:
+        deleted: {type: boolean, enum: [true]}
+    AdminStatus:
+      type: object
+      required: [auth_enabled]
+      properties:
+        auth_enabled: {type: boolean}
+    AdminToken:
+      type: object
+      required: [token, note]
+      properties:
+        token:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          writeOnly: true
+          description: Returned only by this operation.
+        note: {type: string}
+    ServiceInput:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, minLength: 1, example: orders}
+        protocol: {$ref: '#/components/schemas/Protocol'}
+        connect_timeout_ms: {type: integer, format: int64, minimum: 0, default: 5000}
+        read_timeout_ms: {type: integer, format: int64, minimum: 0, default: 60000}
+        write_timeout_ms: {type: integer, format: int64, minimum: 0, default: 60000}
+        retries: {type: integer, format: int32, minimum: 0, default: 1}
+        lb_algorithm: {$ref: '#/components/schemas/LoadBalancingAlgorithm'}
+        tls_sni: {type: string, nullable: true, example: upstream.example.com}
+        health_path: {type: string, nullable: true, example: /healthz}
+    Service:
+      allOf:
+        - type: object
+          required: [id, name, protocol, connect_timeout_ms, read_timeout_ms, write_timeout_ms, retries, lb_algorithm, tls_sni, health_path, created_at, updated_at]
+          properties:
+            id: {$ref: '#/components/schemas/Id'}
+            created_at: {$ref: '#/components/schemas/Timestamp'}
+            updated_at: {$ref: '#/components/schemas/Timestamp'}
+        - $ref: '#/components/schemas/ServiceInput'
+    TargetInput:
+      type: object
+      required: [host, port]
+      properties:
+        host: {type: string, minLength: 1, example: 127.0.0.1}
+        port: {type: integer, minimum: 0, maximum: 65535, example: 9001}
+        weight: {type: integer, format: int32, minimum: 0, default: 100}
+        enabled: {type: boolean, default: true}
+    Target:
+      allOf:
+        - type: object
+          required: [id, service_id, host, port, weight, enabled]
+          properties:
+            id: {$ref: '#/components/schemas/Id'}
+            service_id: {$ref: '#/components/schemas/Id'}
+        - $ref: '#/components/schemas/TargetInput'
+    RouteSplit:
+      type: object
+      required: [service_id, weight]
+      properties:
+        service_id: {$ref: '#/components/schemas/Id'}
+        weight: {type: integer, format: int32, minimum: 1}
+    RouteInput:
+      type: object
+      required: [name, service_id]
+      properties:
+        name: {type: string, minLength: 1, example: orders-api}
+        service_id: {$ref: '#/components/schemas/Id'}
+        priority: {type: integer, format: int32, default: 0}
+        hosts: {type: array, default: [], items: {type: string}, example: [api.example.com, '*.internal.example.com']}
+        paths: {type: array, default: [], items: {type: string}, example: [/orders]}
+        methods: {type: array, default: [], items: {type: string}, example: [GET, POST]}
+        headers:
+          type: object
+          default: {}
+          additionalProperties: {type: string}
+          description: Every header must match. Names are case-insensitive; `*` means present with any value.
+        splits:
+          type: array
+          default: []
+          items: {$ref: '#/components/schemas/RouteSplit'}
+          description: Non-empty weighted splits override `service_id`.
+        strip_path: {type: boolean, default: false}
+        preserve_host: {type: boolean, default: false}
+        enabled: {type: boolean, default: true}
+    Route:
+      allOf:
+        - type: object
+          required: [id, name, service_id, priority, hosts, paths, methods, headers, splits, strip_path, preserve_host, enabled]
+          properties: {id: {$ref: '#/components/schemas/Id'}}
+        - $ref: '#/components/schemas/RouteInput'
+    StreamRouteInput:
+      type: object
+      required: [name, listen_addr, service_id]
+      properties:
+        name: {type: string, minLength: 1, example: postgres}
+        listen_addr: {type: string, example: '0.0.0.0:5432'}
+        service_id: {$ref: '#/components/schemas/Id'}
+        enabled: {type: boolean, default: true}
+    StreamRoute:
+      allOf:
+        - type: object
+          required: [id, name, listen_addr, service_id, enabled]
+          properties: {id: {$ref: '#/components/schemas/Id'}}
+        - $ref: '#/components/schemas/StreamRouteInput'
+    StreamRouteResult:
+      allOf:
+        - $ref: '#/components/schemas/StreamRoute'
+        - type: object
+          properties:
+            note: {type: string, enum: [listener changes take effect on restart]}
+    StreamRouteDeleteResult:
+      allOf:
+        - $ref: '#/components/schemas/DeleteResult'
+        - type: object
+          required: [note]
+          properties:
+            note: {type: string, enum: [listener changes take effect on restart]}
+    PluginInput:
+      type: object
+      required: [type, scope]
+      properties:
+        type: {$ref: '#/components/schemas/PluginType'}
+        scope: {$ref: '#/components/schemas/PluginScope'}
+        service_id: {$ref: '#/components/schemas/NullableId'}
+        route_id: {$ref: '#/components/schemas/NullableId'}
+        config:
+          $ref: '#/components/schemas/PluginConfig'
+        ordering: {type: integer, format: int32, default: 0}
+        enabled: {type: boolean, default: true}
+      description: "`service_id` is required for service scope; `route_id` is required for route scope."
+    Plugin:
+      allOf:
+        - type: object
+          required: [id, type, scope, service_id, route_id, config, ordering, enabled]
+          properties: {id: {$ref: '#/components/schemas/Id'}}
+        - $ref: '#/components/schemas/PluginInput'
+    NullableId:
+      type: integer
+      format: int64
+      minimum: 1
+      nullable: true
+    PluginConfig:
+      description: Config shape is selected by the sibling plugin `type`; unknown fields are ignored by the runtime.
+      oneOf:
+        - $ref: '#/components/schemas/KeyAuthConfig'
+        - $ref: '#/components/schemas/BasicAuthConfig'
+        - $ref: '#/components/schemas/JwtConfig'
+        - $ref: '#/components/schemas/AclConfig'
+        - $ref: '#/components/schemas/IpRestrictionConfig'
+        - $ref: '#/components/schemas/RateLimitConfig'
+        - $ref: '#/components/schemas/ProxyCacheConfig'
+        - $ref: '#/components/schemas/RequestSizeLimitConfig'
+        - $ref: '#/components/schemas/RequestTerminationConfig'
+        - $ref: '#/components/schemas/RedirectConfig'
+        - $ref: '#/components/schemas/CorsConfig'
+        - $ref: '#/components/schemas/WasmPluginConfig'
+        - $ref: '#/components/schemas/TransformConfig'
+        - $ref: '#/components/schemas/ResponseBodyTransformConfig'
+        - $ref: '#/components/schemas/HttpLogConfig'
+    KeyAuthConfig:
+      type: object
+      properties:
+        key_names: {type: array, items: {type: string}, default: [apikey, x-api-key]}
+        hide_credentials: {type: boolean, default: false}
+    BasicAuthConfig:
+      type: object
+      properties:
+        realm: {type: string, default: Raahi}
+    JwtConfig:
+      type: object
+      properties:
+        key_claim_name: {type: string, default: iss}
+        uri_param_names: {type: array, items: {type: string}, default: [jwt]}
+        require_exp: {type: boolean, default: false}
+        jwks_url: {type: string, format: uri, nullable: true}
+        consumer_claim: {type: string, default: sub}
+    AclConfig:
+      type: object
+      properties:
+        allow: {type: array, items: {type: string}, default: []}
+        deny: {type: array, items: {type: string}, default: []}
+    IpRestrictionConfig:
+      type: object
+      properties:
+        allow: {type: array, items: {type: string}, default: []}
+        deny: {type: array, items: {type: string}, default: []}
+        status: {type: integer, minimum: 100, maximum: 599, default: 403}
+        message: {type: string, default: Your IP address is not allowed}
+    RateLimitConfig:
+      type: object
+      properties:
+        limit: {type: integer, format: int32, minimum: 0, default: 60}
+        window_secs: {type: integer, format: int64, minimum: 0, default: 60}
+        key: {type: string, enum: [ip, consumer, route], default: ip}
+        headers: {type: boolean, default: true}
+    ProxyCacheConfig:
+      type: object
+      properties:
+        ttl_secs: {type: integer, format: int64, minimum: 1, default: 60}
+        max_body_bytes: {type: integer, format: int64, minimum: 0, default: 1048576}
+        methods: {type: array, items: {type: string}, default: [GET]}
+        cache_key_query: {type: boolean, default: true}
+    RequestSizeLimitConfig:
+      type: object
+      properties:
+        max_bytes: {type: integer, format: int64, minimum: 0, default: 10485760}
+        require_content_length: {type: boolean, default: false}
+    RequestTerminationConfig:
+      type: object
+      properties:
+        status: {type: integer, minimum: 100, maximum: 599, default: 503}
+        message: {type: string, default: Service temporarily unavailable}
+        content_type: {type: string, default: 'text/plain; charset=utf-8'}
+    RedirectConfig:
+      type: object
+      required: [location]
+      properties:
+        status: {type: integer, enum: [301, 302, 307, 308], default: 302}
+        location: {type: string, format: uri}
+        preserve_path: {type: boolean, default: true}
+    CorsConfig:
+      type: object
+      properties:
+        allow_origins: {type: array, items: {type: string}, default: ['*']}
+        allow_methods: {type: array, items: {type: string}, default: [GET, POST, PUT, PATCH, DELETE, OPTIONS]}
+        allow_headers: {type: array, items: {type: string}, default: ['*']}
+        expose_headers: {type: array, items: {type: string}, default: []}
+        allow_credentials: {type: boolean, default: false}
+        max_age: {type: integer, format: int32, minimum: 0, default: 3600}
+    WasmPluginConfig:
+      type: object
+      required: [module]
+      properties:
+        module: {type: string, minLength: 1}
+        config: {type: object, default: {}, additionalProperties: true}
+        fuel: {type: integer, format: int64, minimum: 0, default: 100000000}
+    TransformConfig:
+      type: object
+      properties:
+        add: {type: object, default: {}, additionalProperties: {type: string}}
+        remove: {type: array, items: {type: string}, default: []}
+    ResponseBodyTransformConfig:
+      type: object
+      required: [replace]
+      properties:
+        replace:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [from, to]
+            properties: {from: {type: string}, to: {type: string}}
+        max_body_bytes: {type: integer, format: int64, minimum: 0, default: 1048576}
+        content_types: {type: array, items: {type: string}, default: [text/, application/json]}
+    HttpLogConfig:
+      type: object
+      required: [endpoint]
+      properties:
+        endpoint: {type: string, format: uri}
+        headers: {type: object, default: {}, additionalProperties: {type: string}}
+        batch_max: {type: integer, minimum: 0, default: 50}
+        flush_interval_ms: {type: integer, format: int64, minimum: 0, default: 2000}
+    ConsumerInput:
+      type: object
+      required: [username]
+      properties:
+        username: {type: string, minLength: 1, example: mobile-app}
+        groups: {type: array, items: {type: string}, default: []}
+    Consumer:
+      allOf:
+        - type: object
+          required: [id, username, groups]
+          properties: {id: {$ref: '#/components/schemas/Id'}}
+        - $ref: '#/components/schemas/ConsumerInput'
+    CredentialInput:
+      type: object
+      required: [type, identifier]
+      properties:
+        type: {$ref: '#/components/schemas/CredentialType'}
+        identifier: {type: string, minLength: 1, description: 'API key, Basic username, or JWT key-claim value.'}
+        secret: {type: string, writeOnly: true, description: Required for basic-auth and JWT; unused for key-auth.}
+        algorithm: {type: string, enum: [HS256, HS384, HS512, RS256], default: HS256, description: JWT only.}
+    Credential:
+      type: object
+      required: [id, consumer_id, type, identifier]
+      properties:
+        id: {$ref: '#/components/schemas/Id'}
+        consumer_id: {$ref: '#/components/schemas/Id'}
+        type: {$ref: '#/components/schemas/CredentialType'}
+        identifier: {type: string}
+    CertificateInput:
+      type: object
+      required: [name, cert_pem, key_pem]
+      properties:
+        name: {type: string, minLength: 1}
+        sni: {type: array, items: {type: string}, default: [], example: [api.example.com, '*.example.com']}
+        cert_pem: {type: string, description: PEM certificate chain.}
+        key_pem: {type: string, writeOnly: true, description: Matching PEM private key.}
+    Certificate:
+      type: object
+      required: [id, name, sni, cert_pem]
+      properties:
+        id: {$ref: '#/components/schemas/Id'}
+        name: {type: string}
+        sni: {type: array, items: {type: string}}
+        cert_pem: {type: string}
+    SettingsInput:
+      type: object
+      required: [proxy_http_addr, admin_addr]
+      properties:
+        proxy_http_addr: {type: string, example: '0.0.0.0:8080'}
+        proxy_https_addr: {type: string, nullable: true, example: '0.0.0.0:8443'}
+        admin_addr: {type: string, example: '127.0.0.1:9080'}
+        default_lb: {$ref: '#/components/schemas/LoadBalancingAlgorithm'}
+        active_certificate_id: {$ref: '#/components/schemas/NullableId'}
+    Settings:
+      allOf:
+        - type: object
+          required: [proxy_http_addr, proxy_https_addr, admin_addr, default_lb, active_certificate_id]
+        - $ref: '#/components/schemas/SettingsInput'
+    WasmModuleInput:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, minLength: 1}
+        description: {type: string, default: ''}
+        wasm_base64: {type: string, format: byte, writeOnly: true}
+        wat: {type: string, writeOnly: true, description: WebAssembly text source.}
+    WasmModule:
+      type: object
+      required: [id, name, description, size_bytes, created_at]
+      properties:
+        id: {$ref: '#/components/schemas/Id'}
+        name: {type: string}
+        description: {type: string}
+        size_bytes: {type: integer, format: int64, minimum: 0}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+    PurgeResult:
+      type: object
+      required: [purged]
+      properties:
+        purged: {type: integer, format: int64, minimum: 0}
+    RouteHit:
+      type: object
+      required: [route_id, count, errors, avg_latency_ms]
+      properties:
+        route_id: {$ref: '#/components/schemas/Id'}
+        count: {type: integer, format: int64, minimum: 0}
+        errors: {type: integer, format: int64, minimum: 0}
+        avg_latency_ms: {type: number, format: double, minimum: 0}
+    ConsumerHit:
+      type: object
+      required: [consumer, count]
+      properties:
+        consumer: {type: string}
+        count: {type: integer, format: int64, minimum: 0}
+    MetricsSnapshot:
+      type: object
+      required: [total, class_2xx, class_3xx, class_4xx, class_5xx, no_route, avg_latency_ms, p50_latency_ms, p95_latency_ms, p99_latency_ms, top_routes, top_consumers]
+      properties:
+        total: {type: integer, format: int64, minimum: 0}
+        class_2xx: {type: integer, format: int64, minimum: 0}
+        class_3xx: {type: integer, format: int64, minimum: 0}
+        class_4xx: {type: integer, format: int64, minimum: 0}
+        class_5xx: {type: integer, format: int64, minimum: 0}
+        no_route: {type: integer, format: int64, minimum: 0}
+        avg_latency_ms: {type: number, format: double, minimum: 0}
+        p50_latency_ms: {type: number, format: double, minimum: 0}
+        p95_latency_ms: {type: number, format: double, minimum: 0}
+        p99_latency_ms: {type: number, format: double, minimum: 0}
+        top_routes: {type: array, items: {$ref: '#/components/schemas/RouteHit'}}
+        top_consumers: {type: array, items: {$ref: '#/components/schemas/ConsumerHit'}}
+    RequestRecord:
+      type: object
+      required: [ts_ms, method, host, path, status, latency_ms, route_id, service_id, upstream, consumer]
+      properties:
+        ts_ms: {type: integer, format: int64, minimum: 0, description: Unix timestamp in milliseconds.}
+        method: {type: string}
+        host: {type: string}
+        path: {type: string}
+        status: {type: integer, minimum: 100, maximum: 599}
+        latency_ms: {type: number, format: double, minimum: 0}
+        route_id: {$ref: '#/components/schemas/NullableId'}
+        service_id: {$ref: '#/components/schemas/NullableId'}
+        upstream: {type: string, nullable: true}
+        consumer: {type: string, nullable: true}
+    ConfigSummary:
+      type: object
+      required: [version, routes, services, plugins, consumers, key_credentials]
+      properties:
+        version: {type: integer, format: int64, minimum: 0}
+        routes: {type: integer, minimum: 0}
+        services: {type: integer, minimum: 0}
+        plugins: {type: integer, minimum: 0}
+        consumers: {type: integer, minimum: 0}
+        key_credentials: {type: integer, minimum: 0}
+    TargetHealth:
+      type: object
+      required: [service_id, target_id, host, port, healthy]
+      properties:
+        service_id: {$ref: '#/components/schemas/Id'}
+        target_id: {$ref: '#/components/schemas/Id'}
+        host: {type: string}
+        port: {type: integer, minimum: 0, maximum: 65535}
+        healthy: {type: boolean}
+    RouterTestSplit:
+      type: object
+      required: [service_id, service_name, weight]
+      properties:
+        service_id: {$ref: '#/components/schemas/Id'}
+        service_name: {type: string}
+        weight: {type: integer, format: int32, minimum: 1}
+    RouterTestResult:
+      type: object
+      required: [matched]
+      properties:
+        matched: {type: boolean}
+        route_id: {$ref: '#/components/schemas/Id'}
+        route_name: {type: string}
+        service_id: {$ref: '#/components/schemas/Id'}
+        service_name: {type: string}
+        matched_prefix: {type: string}
+        strip_path: {type: boolean}
+        preserve_host: {type: boolean}
+        plugins: {type: array, items: {$ref: '#/components/schemas/PluginType'}}
+        splits: {type: array, items: {$ref: '#/components/schemas/RouterTestSplit'}}
+    ExportService:
+      type: object
+      required: [service, targets]
+      properties:
+        service: {$ref: '#/components/schemas/Service'}
+        targets: {type: array, items: {$ref: '#/components/schemas/Target'}}
+    ExportConsumer:
+      type: object
+      required: [consumer, credentials]
+      properties:
+        consumer: {$ref: '#/components/schemas/Consumer'}
+        credentials:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/Credential'
+              - type: object
+                properties:
+                  secret: {type: string, nullable: true, writeOnly: true, description: Present only when include_secrets=true.}
+    ExportCertificate:
+      allOf:
+        - $ref: '#/components/schemas/Certificate'
+        - type: object
+          properties:
+            key_pem: {type: string, writeOnly: true, description: Present only when include_secrets=true.}
+    ExportWasmModule:
+      type: object
+      required: [name, description, wasm_base64]
+      properties:
+        name: {type: string}
+        description: {type: string}
+        wasm_base64: {type: string, format: byte}
+    ExportDocument:
+      type: object
+      required: [raahi_export_version, settings, services, routes, stream_routes, plugins, consumers, certificates, wasm_modules]
+      properties:
+        raahi_export_version: {type: integer, enum: [1]}
+        settings: {$ref: '#/components/schemas/Settings'}
+        services: {type: array, items: {$ref: '#/components/schemas/ExportService'}}
+        routes: {type: array, items: {$ref: '#/components/schemas/Route'}}
+        stream_routes: {type: array, items: {$ref: '#/components/schemas/StreamRoute'}}
+        plugins: {type: array, items: {$ref: '#/components/schemas/Plugin'}}
+        consumers: {type: array, items: {$ref: '#/components/schemas/ExportConsumer'}}
+        certificates: {type: array, items: {$ref: '#/components/schemas/ExportCertificate'}}
+        wasm_modules: {type: array, items: {$ref: '#/components/schemas/ExportWasmModule'}}
+    ImportDocument:
+      allOf:
+        - $ref: '#/components/schemas/ExportDocument'
+      description: Export-shaped document. Entity IDs are remapped. Redacted certificates and dangling references may be skipped.
+    ImportReport:
+      type: object
+      required: [services, targets, routes, stream_routes, plugins, consumers, credentials, certificates, wasm_modules, skipped]
+      properties:
+        services: {type: integer, minimum: 0}
+        targets: {type: integer, minimum: 0}
+        routes: {type: integer, minimum: 0}
+        stream_routes: {type: integer, minimum: 0}
+        plugins: {type: integer, minimum: 0}
+        consumers: {type: integer, minimum: 0}
+        credentials: {type: integer, minimum: 0}
+        certificates: {type: integer, minimum: 0}
+        wasm_modules: {type: integer, minimum: 0}
+        skipped: {type: array, items: {type: string}}

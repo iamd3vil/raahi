@@ -27,3 +27,6 @@ bcrypt = { workspace = true }
 base64 = "0.22"
 sha2 = "0.10"
 rand = "0.8"
+
+[dev-dependencies]
+serde_yaml = "0.9"
