@@ -526,6 +526,127 @@ pub async fn events(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
+/// Prometheus text-format exporter. Served at `/metrics` (outside `/api/v1` and
+/// outside admin auth so scrapers work without config; bind the admin listener
+/// accordingly).
+pub async fn prometheus_metrics(State(s): State<AppState>) -> impl axum::response::IntoResponse {
+    let snap = s.metrics.snapshot();
+    let rc = s.config.load();
+    let route_name = |id: Id| {
+        rc.data
+            .routes
+            .iter()
+            .find(|r| r.id == id)
+            .map(|r| r.name.clone())
+            .unwrap_or_else(|| format!("#{id}"))
+    };
+    let esc = |v: &str| v.replace('\\', "\\\\").replace('"', "\\\"");
+
+    let mut out = String::with_capacity(2048);
+    let mut m = |line: String| {
+        out.push_str(&line);
+        out.push('\n');
+    };
+
+    m("# HELP raahi_requests_total Total requests handled by the proxy.".into());
+    m("# TYPE raahi_requests_total counter".into());
+    m(format!("raahi_requests_total {}", snap.total));
+
+    m("# HELP raahi_responses_total Responses by status class.".into());
+    m("# TYPE raahi_responses_total counter".into());
+    for (class, v) in [
+        ("2xx", snap.class_2xx),
+        ("3xx", snap.class_3xx),
+        ("4xx", snap.class_4xx),
+        ("5xx", snap.class_5xx),
+    ] {
+        m(format!("raahi_responses_total{{class=\"{class}\"}} {v}"));
+    }
+
+    m("# HELP raahi_no_route_total Requests that matched no route (404).".into());
+    m("# TYPE raahi_no_route_total counter".into());
+    m(format!("raahi_no_route_total {}", snap.no_route));
+
+    m("# HELP raahi_request_latency_ms Request latency in milliseconds (recent-window percentiles).".into());
+    m("# TYPE raahi_request_latency_ms gauge".into());
+    for (q, v) in [
+        ("0.5", snap.p50_latency_ms),
+        ("0.95", snap.p95_latency_ms),
+        ("0.99", snap.p99_latency_ms),
+    ] {
+        m(format!("raahi_request_latency_ms{{quantile=\"{q}\"}} {v}"));
+    }
+    m("# HELP raahi_request_latency_avg_ms Mean request latency (all-time).".into());
+    m("# TYPE raahi_request_latency_avg_ms gauge".into());
+    m(format!("raahi_request_latency_avg_ms {}", snap.avg_latency_ms));
+
+    // Samples of one metric family must stay contiguous in the exposition format.
+    m("# HELP raahi_route_requests_total Requests per route.".into());
+    m("# TYPE raahi_route_requests_total counter".into());
+    for r in &snap.top_routes {
+        m(format!(
+            "raahi_route_requests_total{{route=\"{}\"}} {}",
+            esc(&route_name(r.route_id)),
+            r.count
+        ));
+    }
+    m("# HELP raahi_route_errors_total 4xx+5xx responses per route.".into());
+    m("# TYPE raahi_route_errors_total counter".into());
+    for r in &snap.top_routes {
+        m(format!(
+            "raahi_route_errors_total{{route=\"{}\"}} {}",
+            esc(&route_name(r.route_id)),
+            r.errors
+        ));
+    }
+
+    m("# HELP raahi_consumer_requests_total Requests per authenticated consumer.".into());
+    m("# TYPE raahi_consumer_requests_total counter".into());
+    for c in &snap.top_consumers {
+        m(format!(
+            "raahi_consumer_requests_total{{consumer=\"{}\"}} {}",
+            esc(&c.consumer),
+            c.count
+        ));
+    }
+
+    m("# HELP raahi_target_healthy Upstream target health (1 = healthy).".into());
+    m("# TYPE raahi_target_healthy gauge".into());
+    let mut targets: Vec<(Id, String, bool)> = Vec::new();
+    for (&sid, sr) in &rc.services {
+        for b in &sr.backends {
+            targets.push((
+                sid,
+                format!("{}:{}", b.host, b.port),
+                b.healthy.load(std::sync::atomic::Ordering::Relaxed),
+            ));
+        }
+    }
+    targets.sort();
+    for (sid, addr, healthy) in targets {
+        let svc = rc
+            .services
+            .get(&sid)
+            .map(|sr| sr.service.name.clone())
+            .unwrap_or_else(|| format!("#{sid}"));
+        m(format!(
+            "raahi_target_healthy{{service=\"{}\",target=\"{}\"}} {}",
+            esc(&svc),
+            esc(&addr),
+            healthy as u8
+        ));
+    }
+
+    m("# HELP raahi_config_version Monotonic config snapshot version.".into());
+    m("# TYPE raahi_config_version gauge".into());
+    m(format!("raahi_config_version {}", rc.data.version));
+
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        out,
+    )
+}
+
 /// Debug view of the live compiled snapshot (counts + version).
 pub async fn config_summary(State(s): State<AppState>) -> Json<Value> {
     let rc = s.config.load();

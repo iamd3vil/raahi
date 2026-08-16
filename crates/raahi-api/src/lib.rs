@@ -153,6 +153,7 @@ pub fn build_router(state: AppState) -> Router {
 
     let mut app = Router::new()
         .route("/healthz", get(healthz))
+        .route("/metrics", get(prometheus_metrics))
         .nest("/api/v1", api);
 
     // Serve the built SPA (if present) with a fallback to index.html for client routing.
