@@ -598,20 +598,74 @@ pub async fn router_test(
     }
 }
 
-/// Export the full configuration as one JSON document (secrets excluded).
-pub async fn export_config(State(s): State<AppState>) -> ApiResult<Json<Value>> {
+#[derive(Deserialize)]
+pub struct ExportQuery {
+    /// Include cert private keys and credential secrets/hashes — needed for a
+    /// restorable backup. Off by default.
+    #[serde(default)]
+    include_secrets: bool,
+}
+
+/// Export the full configuration as one JSON document. With
+/// `?include_secrets=true` the export is a complete restorable backup.
+pub async fn export_config(
+    State(s): State<AppState>,
+    Query(q): Query<ExportQuery>,
+) -> ApiResult<Json<Value>> {
+    use base64::Engine;
+
     let services = s.store.list_services().await?;
     let mut services_out = Vec::new();
     for svc in &services {
         let targets = s.store.list_targets_for(svc.id).await?;
         services_out.push(json!({ "service": svc, "targets": targets }));
     }
+
     let consumers = s.store.list_consumers().await?;
     let mut consumers_out = Vec::new();
     for c in &consumers {
         let creds = s.store.list_credentials_for(c.id).await?;
+        let creds: Vec<Value> = creds
+            .iter()
+            .map(|cr| {
+                let mut v = json!(cr);
+                if q.include_secrets {
+                    v["secret"] = json!(cr.secret);
+                }
+                v
+            })
+            .collect();
         consumers_out.push(json!({ "consumer": c, "credentials": creds }));
     }
+
+    let certs: Vec<Value> = s
+        .store
+        .list_certificates()
+        .await?
+        .iter()
+        .map(|c| {
+            let mut v = json!(c);
+            if q.include_secrets {
+                v["key_pem"] = json!(c.key_pem);
+            }
+            v
+        })
+        .collect();
+
+    let wasm: Vec<Value> = s
+        .store
+        .list_wasm_modules()
+        .await?
+        .iter()
+        .map(|m| {
+            json!({
+                "name": m.name,
+                "description": m.description,
+                "wasm_base64": base64::engine::general_purpose::STANDARD.encode(&m.wasm),
+            })
+        })
+        .collect();
+
     Ok(Json(json!({
         "raahi_export_version": 1,
         "settings": s.store.get_settings().await?,
@@ -619,7 +673,40 @@ pub async fn export_config(State(s): State<AppState>) -> ApiResult<Json<Value>> 
         "routes": s.store.list_routes().await?,
         "plugins": s.store.list_plugins().await?,
         "consumers": consumers_out,
-        // key_pem is never serialized; cert_pem is public material.
-        "certificates": s.store.list_certificates().await?,
+        "certificates": certs,
+        "wasm_modules": wasm,
     })))
+}
+
+/// Declarative import: full replace of the routing config from an export document.
+pub async fn import_config(
+    State(s): State<AppState>,
+    Json(doc): Json<ImportDoc>,
+) -> ApiResult<Json<Value>> {
+    // Validate wasm modules and certificates *before* the destructive import.
+    use base64::Engine;
+    for mv in &doc.wasm_modules {
+        if let Some(b64) = mv["wasm_base64"].as_str() {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .map_err(|e| ApiError::BadRequest(format!("wasm module base64: {e}")))?;
+            raahi_proxy::validate_wasm(&bytes).map_err(ApiError::BadRequest)?;
+        }
+    }
+    for cv in &doc.certificates {
+        let (cert, key) = (
+            cv["cert_pem"].as_str().unwrap_or(""),
+            cv["key_pem"].as_str().unwrap_or(""),
+        );
+        if !key.is_empty() {
+            raahi_proxy::validate_cert(cert, key).map_err(|e| {
+                ApiError::BadRequest(format!("certificate '{}': {e}", cv["name"].as_str().unwrap_or("?")))
+            })?;
+        }
+    }
+
+    let report = s.store.import(&doc).await?;
+    reload(&s).await?;
+    reload_certs(&s).await?;
+    Ok(Json(json!(report)))
 }

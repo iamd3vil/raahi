@@ -9,7 +9,8 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use raahi_core::{CredentialType, JwtCred, ProxyConfig, Target};
+use raahi_core::{CredentialType, ImportDoc, JwtCred, ProxyConfig, Target};
+use serde::Serialize;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::SqlitePool;
 
@@ -34,6 +35,20 @@ pub enum StoreError {
 pub struct Store {
     pool: SqlitePool,
     version: std::sync::Arc<AtomicU64>,
+}
+
+/// What an import did — counts of restored entities plus anything skipped and why.
+#[derive(Debug, Default, Serialize)]
+pub struct ImportReport {
+    pub services: usize,
+    pub targets: usize,
+    pub routes: usize,
+    pub plugins: usize,
+    pub consumers: usize,
+    pub credentials: usize,
+    pub certificates: usize,
+    pub wasm_modules: usize,
+    pub skipped: Vec<String>,
 }
 
 impl Store {
@@ -81,6 +96,251 @@ impl Store {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Declarative full-replace import of an export document, inside one
+    /// transaction: existing routing config is wiped and rebuilt from `doc`.
+    /// Entity ids are remapped; the admin token and listener addresses survive
+    /// unless the document carries settings. Certificates without a `key_pem`
+    /// (redacted exports) and dangling references are skipped, not fatal.
+    pub async fn import(&self, doc: &ImportDoc) -> Result<ImportReport, StoreError> {
+        use std::collections::HashMap as Map;
+
+        if doc.raahi_export_version != 1 {
+            return Err(StoreError::Invalid(format!(
+                "unsupported export version {}",
+                doc.raahi_export_version
+            )));
+        }
+
+        let mut report = ImportReport::default();
+        let mut tx = self.pool.begin().await?;
+
+        for table in [
+            "plugins",
+            "routes",
+            "consumer_credentials",
+            "consumers",
+            "targets",
+            "services",
+            "certificates",
+            "wasm_modules",
+        ] {
+            sqlx::query(&format!("DELETE FROM {table}")).execute(&mut *tx).await?;
+        }
+
+        // Services + targets (old id -> new id).
+        let mut svc_map: Map<i64, i64> = Map::new();
+        for is in &doc.services {
+            let s = &is.service;
+            let res = sqlx::query(
+                "INSERT INTO services (name, protocol, connect_timeout_ms, read_timeout_ms, \
+                 write_timeout_ms, retries, lb_algorithm, tls_sni, created_at, updated_at) \
+                 VALUES (?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))",
+            )
+            .bind(&s.name)
+            .bind(s.protocol.as_str())
+            .bind(s.connect_timeout_ms as i64)
+            .bind(s.read_timeout_ms as i64)
+            .bind(s.write_timeout_ms as i64)
+            .bind(s.retries as i64)
+            .bind(s.lb_algorithm.as_str())
+            .bind(&s.tls_sni)
+            .execute(&mut *tx)
+            .await?;
+            let new_id = res.last_insert_rowid();
+            svc_map.insert(s.id, new_id);
+            report.services += 1;
+
+            for t in &is.targets {
+                sqlx::query(
+                    "INSERT INTO targets (service_id, host, port, weight, enabled) VALUES (?,?,?,?,?)",
+                )
+                .bind(new_id)
+                .bind(&t.host)
+                .bind(t.port as i64)
+                .bind(t.weight as i64)
+                .bind(t.enabled as i64)
+                .execute(&mut *tx)
+                .await?;
+                report.targets += 1;
+            }
+        }
+
+        // Routes (old id -> new id).
+        let mut route_map: Map<i64, i64> = Map::new();
+        for r in &doc.routes {
+            let Some(&sid) = svc_map.get(&r.service_id) else {
+                report.skipped.push(format!("route '{}': unknown service {}", r.name, r.service_id));
+                continue;
+            };
+            let res = sqlx::query(
+                "INSERT INTO routes (name, service_id, priority, hosts, paths, methods, \
+                 strip_path, preserve_host, enabled) VALUES (?,?,?,?,?,?,?,?,?)",
+            )
+            .bind(&r.name)
+            .bind(sid)
+            .bind(r.priority as i64)
+            .bind(serde_json::to_string(&r.hosts).unwrap_or_default())
+            .bind(serde_json::to_string(&r.paths).unwrap_or_default())
+            .bind(serde_json::to_string(&r.methods).unwrap_or_default())
+            .bind(r.strip_path as i64)
+            .bind(r.preserve_host as i64)
+            .bind(r.enabled as i64)
+            .execute(&mut *tx)
+            .await?;
+            route_map.insert(r.id, res.last_insert_rowid());
+            report.routes += 1;
+        }
+
+        // Consumers + credentials.
+        for ic in &doc.consumers {
+            let c = &ic.consumer;
+            let res = sqlx::query("INSERT INTO consumers (username, groups) VALUES (?,?)")
+                .bind(&c.username)
+                .bind(serde_json::to_string(&c.groups).unwrap_or_else(|_| "[]".into()))
+                .execute(&mut *tx)
+                .await?;
+            let cid = res.last_insert_rowid();
+            report.consumers += 1;
+
+            for cr in &ic.credentials {
+                let ctype = cr["type"].as_str().unwrap_or("");
+                let identifier = cr["identifier"].as_str().unwrap_or("");
+                let secret = cr["secret"].as_str();
+                if identifier.is_empty() || CredentialType::from_str(ctype).is_none() {
+                    report.skipped.push(format!("credential for '{}': malformed", c.username));
+                    continue;
+                }
+                // basic-auth / jwt credentials are useless without their secret
+                // (redacted exports).
+                if secret.is_none() && ctype != "key-auth" {
+                    report.skipped.push(format!(
+                        "{ctype} credential '{identifier}' for '{}': secret not in export",
+                        c.username
+                    ));
+                    continue;
+                }
+                sqlx::query(
+                    "INSERT INTO consumer_credentials (consumer_id, type, identifier, secret) \
+                     VALUES (?,?,?,?)",
+                )
+                .bind(cid)
+                .bind(ctype)
+                .bind(identifier)
+                .bind(secret)
+                .execute(&mut *tx)
+                .await?;
+                report.credentials += 1;
+            }
+        }
+
+        // Certificates (old id -> new id, for settings.active_certificate_id).
+        let mut cert_map: Map<i64, i64> = Map::new();
+        for cv in &doc.certificates {
+            let name = cv["name"].as_str().unwrap_or("");
+            let key_pem = cv["key_pem"].as_str().unwrap_or("");
+            if key_pem.is_empty() {
+                report.skipped.push(format!(
+                    "certificate '{name}': key_pem not in export (re-export with include_secrets=true)"
+                ));
+                continue;
+            }
+            let res = sqlx::query(
+                "INSERT INTO certificates (name, sni, cert_pem, key_pem) VALUES (?,?,?,?)",
+            )
+            .bind(name)
+            .bind(cv["sni"].to_string())
+            .bind(cv["cert_pem"].as_str().unwrap_or(""))
+            .bind(key_pem)
+            .execute(&mut *tx)
+            .await?;
+            if let Some(old) = cv["id"].as_i64() {
+                cert_map.insert(old, res.last_insert_rowid());
+            }
+            report.certificates += 1;
+        }
+
+        // WASM modules (bytes validated by the API layer before import).
+        for mv in &doc.wasm_modules {
+            let name = mv["name"].as_str().unwrap_or("");
+            let Some(b64) = mv["wasm_base64"].as_str() else {
+                report.skipped.push(format!("wasm module '{name}': no wasm_base64 in export"));
+                continue;
+            };
+            use base64::Engine;
+            let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64) else {
+                report.skipped.push(format!("wasm module '{name}': invalid base64"));
+                continue;
+            };
+            sqlx::query(
+                "INSERT INTO wasm_modules (name, description, wasm, created_at) \
+                 VALUES (?,?,?,datetime('now'))",
+            )
+            .bind(name)
+            .bind(mv["description"].as_str().unwrap_or(""))
+            .bind(&bytes)
+            .execute(&mut *tx)
+            .await?;
+            report.wasm_modules += 1;
+        }
+
+        // Plugins (with remapped scope references).
+        for p in &doc.plugins {
+            let sid = match p.service_id {
+                Some(old) => match svc_map.get(&old) {
+                    Some(&new) => Some(new),
+                    None => {
+                        report.skipped.push(format!("plugin {}: unknown service {old}", p.plugin_type.as_str()));
+                        continue;
+                    }
+                },
+                None => None,
+            };
+            let rid = match p.route_id {
+                Some(old) => match route_map.get(&old) {
+                    Some(&new) => Some(new),
+                    None => {
+                        report.skipped.push(format!("plugin {}: unknown route {old}", p.plugin_type.as_str()));
+                        continue;
+                    }
+                },
+                None => None,
+            };
+            sqlx::query(
+                "INSERT INTO plugins (type, scope, service_id, route_id, config, ordering, enabled) \
+                 VALUES (?,?,?,?,?,?,?)",
+            )
+            .bind(p.plugin_type.as_str())
+            .bind(p.scope.as_str())
+            .bind(sid)
+            .bind(rid)
+            .bind(p.config.to_string())
+            .bind(p.ordering as i64)
+            .bind(p.enabled as i64)
+            .execute(&mut *tx)
+            .await?;
+            report.plugins += 1;
+        }
+
+        // Settings (admin token hash is never touched by imports).
+        if let Some(s) = &doc.settings {
+            let active_cert = s.active_certificate_id.and_then(|old| cert_map.get(&old).copied());
+            sqlx::query(
+                "UPDATE settings SET proxy_http_addr=?, proxy_https_addr=?, admin_addr=?, \
+                 default_lb=?, active_certificate_id=? WHERE id=1",
+            )
+            .bind(&s.proxy_http_addr)
+            .bind(&s.proxy_https_addr)
+            .bind(&s.admin_addr)
+            .bind(s.default_lb.as_str())
+            .bind(active_cert)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(report)
     }
 
     /// Build a fresh immutable [`ProxyConfig`] snapshot from the current DB state.

@@ -101,10 +101,13 @@
     }
   }
 
+  let includeSecrets = $state(false);
+  let importing = $state(false);
+
   async function exportConfig() {
     exporting = true;
     try {
-      const data = await api.exportConfig();
+      const data = await api.exportConfig(includeSecrets);
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -117,6 +120,32 @@
       toast((e as ApiError).message, 'err');
     } finally {
       exporting = false;
+    }
+  }
+
+  async function importConfig(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    if (
+      !confirm(
+        `Replace the ENTIRE configuration with "${file.name}"?\n\nAll current services, routes, plugins, consumers, and certificates will be wiped and rebuilt from the file. This applies immediately to live traffic.`,
+      )
+    )
+      return;
+    importing = true;
+    try {
+      const doc = JSON.parse(await file.text());
+      const r = await api.importConfig(doc);
+      const summary = `Imported ${r.services} services, ${r.routes} routes, ${r.plugins} plugins, ${r.consumers} consumers, ${r.certificates} certs`;
+      toast(r.skipped.length ? `${summary} — ${r.skipped.length} skipped (see console)` : summary, 'ok');
+      if (r.skipped.length) console.warn('Import skipped:', r.skipped);
+      await load();
+    } catch (e) {
+      toast((e as ApiError).message ?? 'Import failed: invalid JSON', 'err');
+    } finally {
+      importing = false;
     }
   }
 
@@ -226,19 +255,34 @@
       </div>
 
       <div class="panel" style="margin-top:16px">
-        <div class="panel-head"><h2>Backup</h2></div>
-        <p class="muted" style="margin:0 0 12px">
-          Download the full configuration — services, targets, routes, plugins, consumers, certificates, and
-          settings — as a single JSON document. Secrets (private keys, password hashes) are never included.
+        <div class="panel-head"><h2>Backup & restore</h2></div>
+        <p class="muted" style="margin:0 0 10px">
+          Export the full configuration as one JSON document, or import one to
+          <strong>replace</strong> the running configuration declaratively.
         </p>
-        <button class="btn" onclick={exportConfig} disabled={exporting}>
-          {#if exporting}<span class="spinner"></span>{:else}
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
-            </svg>
-          {/if}
-          Export configuration
+        <button class="opt" style="padding-top:0" onclick={() => (includeSecrets = !includeSecrets)}>
+          <span class="toggle {includeSecrets ? 'on' : ''}"></span>
+          Include secrets (restorable backup: cert keys, credential hashes)
         </button>
+        <div class="flex" style="gap:8px; margin-top:8px">
+          <button class="btn" onclick={exportConfig} disabled={exporting}>
+            {#if exporting}<span class="spinner"></span>{:else}
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+              </svg>
+            {/if}
+            Export
+          </button>
+          <label class="btn" class:disabled={importing}>
+            {#if importing}<span class="spinner"></span>{:else}
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 15V3m0 0 4 4m-4-4-4 4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+              </svg>
+            {/if}
+            Import…
+            <input type="file" accept=".json,application/json" style="display:none" onchange={importConfig} />
+          </label>
+        </div>
       </div>
     </div>
   </div>

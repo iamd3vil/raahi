@@ -143,6 +143,43 @@ pub struct CertificateSpec {
     pub key_pem: String,
 }
 
+/// The import document — the same shape `GET /export` produces. Entity ids inside
+/// are the *exporting* instance's ids; the importer remaps them.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ImportDoc {
+    pub raahi_export_version: u32,
+    #[serde(default)]
+    pub settings: Option<SettingsSpec>,
+    #[serde(default)]
+    pub services: Vec<ImportService>,
+    #[serde(default)]
+    pub routes: Vec<Route>,
+    #[serde(default)]
+    pub plugins: Vec<Plugin>,
+    #[serde(default)]
+    pub consumers: Vec<ImportConsumer>,
+    /// Raw values: certificates without `key_pem` (redacted exports) are skipped.
+    #[serde(default)]
+    pub certificates: Vec<serde_json::Value>,
+    /// Raw values: `{name, description, wasm_base64}`.
+    #[serde(default)]
+    pub wasm_modules: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ImportService {
+    pub service: Service,
+    #[serde(default)]
+    pub targets: Vec<Target>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ImportConsumer {
+    pub consumer: Consumer,
+    #[serde(default)]
+    pub credentials: Vec<serde_json::Value>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsSpec {
     pub proxy_http_addr: String,

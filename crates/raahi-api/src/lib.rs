@@ -142,6 +142,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/health", get(target_health))
         .route("/router/test", get(router_test))
         .route("/export", get(export_config))
+        .route("/import", axum::routing::post(import_config))
         .route(
             "/admin/token",
             axum::routing::post(create_admin_token).delete(delete_admin_token),

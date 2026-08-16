@@ -138,6 +138,18 @@ export interface WasmModule {
   created_at: string;
 }
 
+export interface ImportReport {
+  services: number;
+  targets: number;
+  routes: number;
+  plugins: number;
+  consumers: number;
+  credentials: number;
+  certificates: number;
+  wasm_modules: number;
+  skipped: string[];
+}
+
 export interface ConfigSummary {
   version: number;
   routes: number;

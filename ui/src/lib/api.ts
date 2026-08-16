@@ -14,6 +14,7 @@ import type {
   Service,
   Settings,
   Target,
+  ImportReport,
   TargetHealth,
   WasmModule,
 } from './types';
@@ -121,7 +122,9 @@ export const api = {
   requests: (limit = 100) => req<RequestRecord[]>('GET', `/requests?limit=${limit}`),
   health: () => req<TargetHealth[]>('GET', '/health'),
   configSummary: () => req<ConfigSummary>('GET', '/config'),
-  exportConfig: () => req<unknown>('GET', '/export'),
+  exportConfig: (includeSecrets = false) =>
+    req<unknown>('GET', `/export?include_secrets=${includeSecrets}`),
+  importConfig: (doc: unknown) => req<ImportReport>('POST', '/import', doc),
 
   // wasm modules
   listWasmModules: () => req<WasmModule[]>('GET', '/wasm-modules'),

@@ -2518,6 +2518,7 @@ dependencies = [
 name = "raahi-store"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "chrono",
  "raahi-core",
  "serde",

@@ -6,6 +6,7 @@ license.workspace = true
 description = "Raahi config store: SQLite persistence and snapshot building"
 
 [dependencies]
+base64 = "0.22"
 raahi-core = { workspace = true }
 sqlx = { workspace = true }
 serde = { workspace = true }
