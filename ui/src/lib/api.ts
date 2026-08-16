@@ -95,6 +95,7 @@ export const api = {
   createPlugin: (p: Partial<Plugin>) => req<Plugin>('POST', '/plugins', p),
   updatePlugin: (id: number, p: Partial<Plugin>) => req<Plugin>('PUT', `/plugins/${id}`, p),
   deletePlugin: (id: number) => req('DELETE', `/plugins/${id}`),
+  purgeCache: () => req<{ purged: number }>('POST', '/cache/purge'),
 
   // consumers + credentials
   listConsumers: () => req<Consumer[]>('GET', '/consumers'),

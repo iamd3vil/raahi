@@ -71,12 +71,14 @@
     acl: { allow: [], deny: [] },
     'ip-restriction': { allow: [], deny: [], status: 403, message: 'Your IP address is not allowed' },
     'rate-limit': { limit: 60, window_secs: 60, key: 'ip', headers: true },
+    'proxy-cache': { ttl_secs: 60, max_body_bytes: 1048576, methods: ['GET'], cache_key_query: true },
     'request-size-limit': { max_bytes: 10485760, require_content_length: false },
     'request-termination': { status: 503, message: 'Service temporarily unavailable', content_type: 'text/plain; charset=utf-8' },
     redirect: { status: 302, location: '', preserve_path: true },
     cors: { allow_origins: ['*'], allow_methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], allow_headers: ['*'], allow_credentials: false, max_age: 3600 },
     'request-transform': { add: {}, remove: [] },
     'response-transform': { add: {}, remove: [] },
+    'response-body-transform': { replace: [], max_body_bytes: 1048576, content_types: ['text/', 'application/json'] },
     'http-log': { endpoint: '', headers: {}, batch_max: 50, flush_interval_ms: 2000 },
     wasm: { module: '', config: {}, fuel: 100000000 },
   };
@@ -88,12 +90,14 @@
     acl: 'Allows or denies authenticated consumers by group. Requires an auth plugin before it.',
     'ip-restriction': 'Allows or denies clients by IP or CIDR (checked before auth).',
     'rate-limit': 'Sliding-window request limiting keyed by client IP, consumer, or route. Sends RateLimit-* headers.',
+    'proxy-cache': 'Caches upstream 200 responses in memory for a TTL and answers repeats directly (x-cache: HIT/MISS).',
     'request-size-limit': 'Rejects requests whose Content-Length exceeds the limit (413).',
     'request-termination': 'Short-circuits every request with a fixed status and message (maintenance mode).',
     redirect: 'Responds with a Location redirect instead of proxying.',
     cors: 'Answers preflight requests and adds CORS headers to responses.',
     'request-transform': 'Adds or removes request headers before proxying upstream.',
     'response-transform': 'Adds or removes response headers before returning downstream.',
+    'response-body-transform': 'Find/replace on text response bodies (buffered up to a size cap; binary passes through).',
     'http-log': 'POSTs request records (JSON batches) to an external collector, off the hot path.',
     wasm: 'Runs an uploaded WASM module on requests and responses (sandboxed, fuel-metered). Multiple wasm plugins stack.',
   };
@@ -112,6 +116,8 @@
   let cfg = $state<Record<string, any>>({});
   // add-headers editor rows for transforms
   let addRows = $state<{ k: string; v: string }[]>([]);
+  // find/replace editor rows for response-body-transform
+  let replaceRows = $state<{ from: string; to: string }[]>([]);
 
   const csv = (s: string) => s.split(',').map((x) => x.trim()).filter(Boolean);
   const list = (v: unknown): string => (Array.isArray(v) ? v.join(', ') : '');
@@ -122,6 +128,13 @@
     if (type === 'request-transform' || type === 'response-transform') {
       addRows = Object.entries((d.add as Record<string, string>) ?? {}).map(([k, v]) => ({ k, v: String(v) }));
       if (addRows.length === 0) addRows = [{ k: '', v: '' }];
+    }
+    if (type === 'response-body-transform') {
+      replaceRows = ((d.replace as { from: string; to: string }[]) ?? []).map((r) => ({
+        from: String(r.from ?? ''),
+        to: String(r.to ?? ''),
+      }));
+      if (replaceRows.length === 0) replaceRows = [{ from: '', to: '' }];
     }
     if (type === 'wasm') {
       cfg.config_json = JSON.stringify(d.config ?? {}, null, 2);
@@ -160,6 +173,19 @@
         window_secs: Number(cfg.window_secs) || 60,
         key: cfg.key ?? 'ip',
         headers: cfg.headers !== false,
+      };
+    if (t === 'proxy-cache')
+      return {
+        ttl_secs: Number(cfg.ttl_secs) || 60,
+        max_body_bytes: Number(cfg.max_body_bytes) || 1048576,
+        methods: csv(String(cfg.methods_csv ?? list(cfg.methods))).map((m) => m.toUpperCase()),
+        cache_key_query: cfg.cache_key_query !== false,
+      };
+    if (t === 'response-body-transform')
+      return {
+        replace: replaceRows.filter((r) => r.from).map((r) => ({ from: r.from, to: r.to })),
+        max_body_bytes: Number(cfg.max_body_bytes) || 1048576,
+        content_types: csv(String(cfg.content_types_csv ?? list(cfg.content_types))),
       };
     if (t === 'request-size-limit')
       return { max_bytes: Number(cfg.max_bytes) || 1, require_content_length: !!cfg.require_content_length };
@@ -364,6 +390,8 @@
         ].filter(Boolean).join(' · ') || '—';
       case 'rate-limit':
         return `${c.limit ?? '?'} req / ${c.window_secs ?? '?'}s by ${c.key ?? 'ip'}`;
+      case 'proxy-cache':
+        return `ttl ${c.ttl_secs ?? 60}s`;
       case 'request-size-limit':
         return `max ${((c.max_bytes ?? 0) / 1048576).toFixed(1)} MB`;
       case 'request-termination':
@@ -377,6 +405,10 @@
         const adds = Object.keys(c.add ?? {}).length;
         const removes = (c.remove ?? []).length;
         return `+${adds} header${adds === 1 ? '' : 's'}, −${removes}`;
+      }
+      case 'response-body-transform': {
+        const n = (c.replace ?? []).length;
+        return `${n} replacement${n === 1 ? '' : 's'}`;
       }
       case 'http-log':
         return `→ ${c.endpoint || '—'}`;
@@ -664,6 +696,50 @@
     <button class="opt" onclick={() => (cfg.headers = cfg.headers === false)}>
       <span class="toggle {cfg.headers !== false ? 'on' : ''}"></span> Send RateLimit-* response headers
     </button>
+  {:else if form.type === 'proxy-cache'}
+    <div class="row">
+      <div class="field">
+        <label for="pc-ttl">TTL <span class="faint">(seconds)</span></label>
+        <input id="pc-ttl" class="input" type="number" min="1" bind:value={cfg.ttl_secs} />
+      </div>
+      <div class="field">
+        <label for="pc-max">Max body size <span class="faint">(bytes)</span></label>
+        <input id="pc-max" class="input" type="number" min="1" bind:value={cfg.max_body_bytes} />
+        <span class="hint">Larger responses are proxied but not cached.</span>
+      </div>
+    </div>
+    <div class="field">
+      <label for="pc-methods">Cacheable methods <span class="faint">(comma-separated)</span></label>
+      <input id="pc-methods" class="input mono" value={cfg.methods_csv ?? list(cfg.methods)}
+        oninput={(e) => (cfg.methods_csv = (e.currentTarget as HTMLInputElement).value)} placeholder="GET" />
+    </div>
+    <button class="opt" onclick={() => (cfg.cache_key_query = cfg.cache_key_query === false)}>
+      <span class="toggle {cfg.cache_key_query !== false ? 'on' : ''}"></span> Include the query string in the cache key
+    </button>
+  {:else if form.type === 'response-body-transform'}
+    <div class="field">
+      <label for="bt-rep-0f">Replacements</label>
+      {#each replaceRows as row, i}
+        <div class="hdr-row">
+          <input id={'bt-rep-' + i + 'f'} class="input mono" placeholder="find" bind:value={row.from} />
+          <input class="input mono" placeholder="replace with" bind:value={row.to} aria-label="Replacement value" />
+          <button class="btn btn-sm btn-ghost" aria-label="Remove replacement" onclick={() => (replaceRows = replaceRows.filter((_, j) => j !== i))}>✕</button>
+        </div>
+      {/each}
+      <button class="btn btn-sm" style="align-self:flex-start" onclick={() => replaceRows.push({ from: '', to: '' })}>+ Add replacement</button>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="bt-max">Max body size <span class="faint">(bytes)</span></label>
+        <input id="bt-max" class="input" type="number" min="1" bind:value={cfg.max_body_bytes} />
+        <span class="hint">Larger responses pass through untransformed.</span>
+      </div>
+      <div class="field">
+        <label for="bt-ct">Content-type prefixes <span class="faint">(comma-separated)</span></label>
+        <input id="bt-ct" class="input mono" value={cfg.content_types_csv ?? list(cfg.content_types)}
+          oninput={(e) => (cfg.content_types_csv = (e.currentTarget as HTMLInputElement).value)} placeholder="text/, application/json" />
+      </div>
+    </div>
   {:else if form.type === 'cors'}
     <div class="field">
       <label for="c-origins">Allowed origins <span class="faint">(comma-separated, * = any)</span></label>

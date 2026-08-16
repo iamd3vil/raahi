@@ -9,6 +9,7 @@ export type PluginType =
   | 'acl'
   | 'ip-restriction'
   | 'rate-limit'
+  | 'proxy-cache'
   | 'request-size-limit'
   | 'request-termination'
   | 'redirect'
@@ -16,6 +17,7 @@ export type PluginType =
   | 'wasm'
   | 'request-transform'
   | 'response-transform'
+  | 'response-body-transform'
   | 'http-log';
 export type PluginScope = 'global' | 'service' | 'route';
 export type CredentialType = 'key-auth' | 'basic-auth' | 'jwt';
@@ -183,6 +185,7 @@ export const PLUGIN_TYPES: PluginType[] = [
   'acl',
   'ip-restriction',
   'rate-limit',
+  'proxy-cache',
   'request-size-limit',
   'request-termination',
   'redirect',
@@ -190,6 +193,7 @@ export const PLUGIN_TYPES: PluginType[] = [
   'wasm',
   'request-transform',
   'response-transform',
+  'response-body-transform',
   'http-log',
 ];
 
@@ -200,6 +204,7 @@ export const PLUGIN_LABELS: Record<PluginType, string> = {
   acl: 'ACL',
   'ip-restriction': 'IP Restriction',
   'rate-limit': 'Rate Limit',
+  'proxy-cache': 'Proxy Cache',
   'request-size-limit': 'Size Limit',
   'request-termination': 'Termination',
   redirect: 'Redirect',
@@ -207,5 +212,6 @@ export const PLUGIN_LABELS: Record<PluginType, string> = {
   wasm: 'WASM',
   'request-transform': 'Request Transform',
   'response-transform': 'Response Transform',
+  'response-body-transform': 'Body Transform',
   'http-log': 'HTTP Log',
 };

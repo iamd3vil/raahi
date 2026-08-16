@@ -101,6 +101,15 @@
     }
   }
 
+  async function purgeCache() {
+    try {
+      const r = await api.purgeCache();
+      toast(`Cache purged (${r.purged} entr${r.purged === 1 ? 'y' : 'ies'})`, 'ok');
+    } catch (e) {
+      toast((e as ApiError).message, 'err');
+    }
+  }
+
   let includeSecrets = $state(false);
   let importing = $state(false);
 
@@ -208,7 +217,10 @@
 
     <div>
       <div class="panel">
-        <div class="panel-head"><h2>Running configuration</h2></div>
+        <div class="panel-head">
+          <h2>Running configuration</h2>
+          <button class="btn btn-sm" onclick={purgeCache} title="Drop every proxy-cache entry">Purge cache</button>
+        </div>
         {#if summary}
           <div class="sum-grid">
             <div class="sum"><span class="sum-v">{summary.version}</span><span class="sum-l">config version</span></div>

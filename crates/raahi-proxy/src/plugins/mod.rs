@@ -5,6 +5,8 @@
 
 mod access;
 mod auth;
+mod bodytransform;
+mod cache;
 mod cors;
 mod ratelimit;
 mod traffic;
@@ -17,6 +19,8 @@ use std::sync::Arc;
 use raahi_core::{Id, Plugin, PluginType, ProxyConfig};
 use serde::Deserialize;
 
+pub use bodytransform::BodyTransformCfg;
+pub use cache::{purge_cache, CacheIntent};
 pub use wasm::{validate_wasm, wat_to_wasm};
 
 /// Read-only request inputs handed to each plugin during the request phase.
@@ -37,7 +41,9 @@ pub struct RespInput<'a> {
 }
 
 /// Side effects a plugin accumulates: an authenticated consumer, request-header
-/// mutations (applied upstream), and response-header mutations (applied downstream).
+/// mutations (applied upstream), response-header mutations (applied downstream),
+/// and response-body intents (cache store / transform) consumed by the proxy's
+/// body phase.
 #[derive(Default)]
 pub struct Effects {
     pub consumer: Option<(Id, String)>,
@@ -45,6 +51,10 @@ pub struct Effects {
     pub req_remove: Vec<String>,
     pub resp_add: Vec<(String, String)>,
     pub resp_remove: Vec<String>,
+    /// proxy-cache miss: store the upstream response under this intent.
+    pub cache_store: Option<CacheIntent>,
+    /// response-body-transform: rewrite the response body with this config.
+    pub body_transform: Option<BodyTransformCfg>,
 }
 
 /// A short-circuit response produced by a plugin (auth failure, rate limit, CORS
@@ -103,6 +113,7 @@ enum PluginInstance {
     Acl(access::AclCfg),
     IpRestriction(access::IpRestrictionCfg),
     RateLimit(Arc<ratelimit::RateLimitState>),
+    ProxyCache(cache::CacheCfg),
     RequestSizeLimit(traffic::SizeLimitCfg),
     RequestTermination(traffic::TerminationCfg),
     Redirect(traffic::RedirectCfg),
@@ -110,6 +121,7 @@ enum PluginInstance {
     Wasm(wasm::WasmPlugin),
     RequestTransform(transform::TransformCfg),
     ResponseTransform(transform::TransformCfg),
+    ResponseBodyTransform(bodytransform::BodyTransformCfg),
     HttpLog(HttpLogCfg),
 }
 
@@ -163,6 +175,9 @@ impl PluginSet {
                         ))
                     }))
                 }
+                PluginType::ProxyCache => {
+                    PluginInstance::ProxyCache(serde_json::from_value(cfg()).unwrap_or_default())
+                }
                 PluginType::RequestSizeLimit => PluginInstance::RequestSizeLimit(
                     serde_json::from_value(cfg()).unwrap_or_default(),
                 ),
@@ -184,6 +199,9 @@ impl PluginSet {
                     serde_json::from_value(cfg()).unwrap_or_default(),
                 ),
                 PluginType::ResponseTransform => PluginInstance::ResponseTransform(
+                    serde_json::from_value(cfg()).unwrap_or_default(),
+                ),
+                PluginType::ResponseBodyTransform => PluginInstance::ResponseBodyTransform(
                     serde_json::from_value(cfg()).unwrap_or_default(),
                 ),
                 PluginType::HttpLog => {
@@ -214,6 +232,7 @@ impl PluginSet {
             PluginInstance::Acl(c) => access::acl(c, input, cfg, effects),
             PluginInstance::IpRestriction(c) => access::ip_restriction(c, input),
             PluginInstance::RateLimit(s) => s.check(input, effects),
+            PluginInstance::ProxyCache(c) => cache::check(c, input, effects),
             PluginInstance::RequestSizeLimit(c) => traffic::size_limit(c, input),
             PluginInstance::RequestTermination(c) => traffic::terminate(c),
             PluginInstance::Redirect(c) => traffic::redirect(c, input),
@@ -225,6 +244,10 @@ impl PluginSet {
             }
             PluginInstance::ResponseTransform(c) => {
                 c.apply_response(effects);
+                Action::Continue
+            }
+            PluginInstance::ResponseBodyTransform(c) => {
+                effects.body_transform = Some(c.clone());
                 Action::Continue
             }
             PluginInstance::HttpLog(_) => Action::Continue, // consumed in the log phase
@@ -256,7 +279,8 @@ impl PluginSet {
 
 /// Type-based execution precedence: CORS preflights answer first, network-level
 /// checks precede auth, auth precedes ACL (which needs the consumer) and rate-limit
-/// (which may key on the consumer), then shaping, then transforms.
+/// (which may key on the consumer), then the cache (so auth and limits still apply
+/// to cached hits), then shaping, then transforms.
 pub fn type_priority(t: PluginType) -> u8 {
     match t {
         PluginType::Cors => 0,
@@ -265,12 +289,14 @@ pub fn type_priority(t: PluginType) -> u8 {
         PluginType::Acl => 3,
         PluginType::RequestSizeLimit => 4,
         PluginType::RateLimit => 5,
-        PluginType::Wasm => 6,
-        PluginType::RequestTermination => 7,
-        PluginType::Redirect => 8,
-        PluginType::RequestTransform => 9,
-        PluginType::ResponseTransform => 10,
-        PluginType::HttpLog => 11,
+        PluginType::ProxyCache => 6,
+        PluginType::Wasm => 7,
+        PluginType::RequestTermination => 8,
+        PluginType::Redirect => 9,
+        PluginType::RequestTransform => 10,
+        PluginType::ResponseTransform => 11,
+        PluginType::ResponseBodyTransform => 12,
+        PluginType::HttpLog => 13,
     }
 }
 

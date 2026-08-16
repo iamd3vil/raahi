@@ -155,6 +155,7 @@ pub enum PluginType {
     Acl,
     IpRestriction,
     RateLimit,
+    ProxyCache,
     RequestSizeLimit,
     RequestTermination,
     Redirect,
@@ -162,6 +163,7 @@ pub enum PluginType {
     Wasm,
     RequestTransform,
     ResponseTransform,
+    ResponseBodyTransform,
     HttpLog,
 }
 
@@ -174,6 +176,7 @@ impl PluginType {
             PluginType::Acl => "acl",
             PluginType::IpRestriction => "ip-restriction",
             PluginType::RateLimit => "rate-limit",
+            PluginType::ProxyCache => "proxy-cache",
             PluginType::RequestSizeLimit => "request-size-limit",
             PluginType::RequestTermination => "request-termination",
             PluginType::Redirect => "redirect",
@@ -181,6 +184,7 @@ impl PluginType {
             PluginType::Wasm => "wasm",
             PluginType::RequestTransform => "request-transform",
             PluginType::ResponseTransform => "response-transform",
+            PluginType::ResponseBodyTransform => "response-body-transform",
             PluginType::HttpLog => "http-log",
         }
     }
@@ -192,6 +196,7 @@ impl PluginType {
             "acl" => PluginType::Acl,
             "ip-restriction" => PluginType::IpRestriction,
             "rate-limit" => PluginType::RateLimit,
+            "proxy-cache" => PluginType::ProxyCache,
             "request-size-limit" => PluginType::RequestSizeLimit,
             "request-termination" => PluginType::RequestTermination,
             "redirect" => PluginType::Redirect,
@@ -199,6 +204,7 @@ impl PluginType {
             "wasm" => PluginType::Wasm,
             "request-transform" => PluginType::RequestTransform,
             "response-transform" => PluginType::ResponseTransform,
+            "response-body-transform" => PluginType::ResponseBodyTransform,
             "http-log" => PluginType::HttpLog,
             _ => return None,
         })

@@ -15,7 +15,9 @@ use raahi_core::{strip_prefix, Id, Plugin};
 
 use crate::httplog::{LogEvent, LogSender};
 use crate::metrics::{Metrics, RequestRecord};
-use crate::plugins::{type_priority, Action, Effects, ReqInput, RespInput, ShortResp};
+use crate::plugins::{
+    type_priority, Action, BodyTransformCfg, CacheIntent, Effects, ReqInput, RespInput, ShortResp,
+};
 use crate::runtime::ConfigHandle;
 
 /// The data-plane service.
@@ -44,6 +46,18 @@ pub struct Ctx {
     req_remove: Vec<String>,
     resp_add: Vec<(String, String)>,
     resp_remove: Vec<String>,
+    /// proxy-cache miss: armed intent to store the response (dropped on non-200 or
+    /// oversized bodies).
+    cache_store: Option<CacheIntent>,
+    /// Response headers captured for the cache entry (hop-by-hop excluded).
+    cache_headers: Vec<(String, String)>,
+    /// Response body accumulated for the cache entry (a copy; passthrough untouched).
+    cache_buf: Vec<u8>,
+    /// response-body-transform: armed config (dropped on content-type mismatch or
+    /// oversized bodies).
+    body_transform: Option<BodyTransformCfg>,
+    /// Body chunks withheld from downstream until end-of-stream for transformation.
+    transform_buf: Vec<u8>,
     method: String,
     host: String,
     path: String,
@@ -211,6 +225,8 @@ impl ProxyHttp for RaahiProxy {
             ctx.req_remove = effects.req_remove;
             ctx.resp_add = effects.resp_add;
             ctx.resp_remove = effects.resp_remove;
+            ctx.cache_store = effects.cache_store;
+            ctx.body_transform = effects.body_transform;
             short
         };
 
@@ -349,6 +365,46 @@ impl ProxyHttp for RaahiProxy {
             }
         }
 
+        // response-body-transform: only text-ish content-types are eligible; the body
+        // length will change, so drop Content-Length and re-chunk.
+        if let Some(cfg) = &ctx.body_transform {
+            let ct = upstream_response
+                .headers
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            if cfg.matches_content_type(ct) {
+                upstream_response.remove_header("content-length");
+                let _ = upstream_response.insert_header("transfer-encoding", "chunked");
+            } else {
+                ctx.body_transform = None;
+            }
+        }
+
+        // proxy-cache: only 200s are stored. Capture the upstream headers for the
+        // cache entry (hop-by-hop and content-length excluded — the body may be
+        // re-chunked) and mark this response as a miss.
+        if ctx.cache_store.is_some() {
+            if upstream_response.status.as_u16() == 200 {
+                ctx.cache_headers = upstream_response
+                    .headers
+                    .iter()
+                    .filter_map(|(k, v)| {
+                        let name = k.as_str();
+                        if ["connection", "keep-alive", "transfer-encoding", "content-length"]
+                            .contains(&name)
+                        {
+                            return None;
+                        }
+                        v.to_str().ok().map(|v| (name.to_string(), v.to_string()))
+                    })
+                    .collect();
+                ctx.resp_add.push(("x-cache".into(), "MISS".into()));
+            } else {
+                ctx.cache_store = None;
+            }
+        }
+
         for k in &ctx.resp_remove {
             upstream_response.remove_header(k.as_str());
         }
@@ -356,6 +412,55 @@ impl ProxyHttp for RaahiProxy {
             let _ = upstream_response.insert_header(k.clone(), v.as_str());
         }
         Ok(())
+    }
+
+    /// Response body phase: the transform runs first (rewriting the passthrough
+    /// bytes), then the cache capture — so a cache entry always stores the final,
+    /// transformed body when both plugins are active.
+    fn response_body_filter(
+        &self,
+        _session: &mut Session,
+        body: &mut Option<Bytes>,
+        end_of_stream: bool,
+        ctx: &mut Self::CTX,
+    ) -> Result<Option<Duration>> {
+        if let Some(cfg) = &ctx.body_transform {
+            // Withhold chunks until end-of-stream, then rewrite the whole body.
+            if let Some(b) = body.take() {
+                ctx.transform_buf.extend_from_slice(&b);
+            }
+            if ctx.transform_buf.len() as u64 > cfg.max_body_bytes {
+                // Too large to transform: flush what was withheld unmodified and
+                // pass the rest of the stream through.
+                *body = Some(Bytes::from(std::mem::take(&mut ctx.transform_buf)));
+                ctx.body_transform = None;
+            } else if end_of_stream {
+                let buf = std::mem::take(&mut ctx.transform_buf);
+                // Only valid UTF-8 is transformed; binary passes through unchanged.
+                let out = match String::from_utf8(buf) {
+                    Ok(s) => Bytes::from(cfg.apply(s)),
+                    Err(e) => Bytes::from(e.into_bytes()),
+                };
+                *body = Some(out);
+                ctx.body_transform = None;
+            }
+        }
+
+        if let Some(intent) = &ctx.cache_store {
+            if let Some(b) = body.as_ref() {
+                ctx.cache_buf.extend_from_slice(b);
+            }
+            if ctx.cache_buf.len() as u64 > intent.max_body_bytes {
+                // Too large to cache: disarm and drop the copy; passthrough unaffected.
+                ctx.cache_store = None;
+                ctx.cache_buf = Vec::new();
+            } else if end_of_stream {
+                let intent = ctx.cache_store.take().unwrap();
+                // Status is always 200 here (non-200s are disarmed in response_filter).
+                intent.store(200, std::mem::take(&mut ctx.cache_headers), std::mem::take(&mut ctx.cache_buf));
+            }
+        }
+        Ok(None)
     }
 
     async fn logging(&self, session: &mut Session, _e: Option<&Error>, ctx: &mut Self::CTX) {

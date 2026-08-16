@@ -251,9 +251,27 @@ fn validate_plugin(spec: &PluginSpec) -> ApiResult<()> {
                 ));
             }
         }
+        PluginType::ProxyCache => {
+            if spec.config["ttl_secs"].as_u64().unwrap_or(60) < 1 {
+                return Err(ApiError::BadRequest("proxy-cache needs ttl_secs >= 1".into()));
+            }
+        }
+        PluginType::ResponseBodyTransform => {
+            let empty = spec.config["replace"].as_array().map_or(true, |a| a.is_empty());
+            if empty {
+                return Err(ApiError::BadRequest(
+                    "response-body-transform needs at least one replace entry".into(),
+                ));
+            }
+        }
         _ => {}
     }
     Ok(())
+}
+
+/// Drop every proxy-cache entry (process-global cache).
+pub async fn purge_cache() -> Json<Value> {
+    Json(json!({ "purged": raahi_proxy::purge_cache() }))
 }
 
 // ---- consumers + credentials -------------------------------------------------

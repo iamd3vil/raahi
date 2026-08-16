@@ -120,6 +120,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/routes/{id}", get(get_route).put(update_route).delete(delete_route))
         .route("/plugins", get(list_plugins).post(create_plugin))
         .route("/plugins/{id}", get(get_plugin).put(update_plugin).delete(delete_plugin))
+        .route("/cache/purge", axum::routing::post(purge_cache))
         .route("/consumers", get(list_consumers).post(create_consumer))
         .route(
             "/consumers/{id}",
