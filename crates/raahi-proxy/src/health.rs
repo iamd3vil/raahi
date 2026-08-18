@@ -10,8 +10,9 @@
 //! Runs as a Pingora background service.
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -41,11 +42,15 @@ struct Probe {
     port: u16,
     health_path: Option<String>,
     flag: Arc<AtomicBool>,
+    /// Resolved addresses shared with the proxy (see `BackendRt::addrs`).
+    addrs: Vec<SocketAddr>,
+    /// Shared elected-address index; moved here when a different address passes.
+    active: Arc<AtomicUsize>,
 }
 
 /// One HTTP/1.1 GET, returning pass/fail on the status line. Plaintext only —
 /// use the TCP check for TLS upstreams.
-async fn http_probe(addr: &str, host: &str, path: &str, deadline: Duration) -> bool {
+async fn http_probe(addr: SocketAddr, host: &str, path: &str, deadline: Duration) -> bool {
     let run = async {
         let mut stream = TcpStream::connect(addr).await.ok()?;
         let req = format!(
@@ -63,8 +68,45 @@ async fn http_probe(addr: &str, host: &str, path: &str, deadline: Duration) -> b
     matches!(timeout(deadline, run).await, Ok(Some(true)))
 }
 
-async fn tcp_probe(addr: &str, deadline: Duration) -> bool {
+async fn tcp_probe(addr: SocketAddr, deadline: Duration) -> bool {
     matches!(timeout(deadline, TcpStream::connect(addr)).await, Ok(Ok(_)))
+}
+
+/// Probe one concrete address with the check kind configured for the service.
+async fn probe_addr(p: &Probe, addr: SocketAddr, deadline: Duration) -> bool {
+    match &p.health_path {
+        Some(path) if !path.is_empty() => http_probe(addr, &p.host, path, deadline).await,
+        _ => tcp_probe(addr, deadline).await,
+    }
+}
+
+/// A target passes when ANY of its resolved addresses answers, starting with the
+/// currently elected one. A pass on a different address elects it for proxy
+/// connects too — so a host resolving to ::1 + 127.0.0.1 with only one of them
+/// listening converges on the working address instead of proxying to the dead one
+/// while probes pass on the other.
+async fn elect_and_probe(p: &Probe, deadline: Duration) -> bool {
+    let n = p.addrs.len();
+    if n == 0 {
+        return false; // unresolvable host: always failing
+    }
+    let start = p.active.load(Ordering::Relaxed).min(n - 1);
+    for i in 0..n {
+        let idx = (start + i) % n;
+        if probe_addr(p, p.addrs[idx], deadline).await {
+            if idx != start {
+                p.active.store(idx, Ordering::Relaxed);
+                tracing::info!(
+                    "health: {}:{} switched to address {}",
+                    p.host,
+                    p.port,
+                    p.addrs[idx]
+                );
+            }
+            return true;
+        }
+    }
+    false
 }
 
 impl HealthService {
@@ -82,6 +124,8 @@ impl HealthService {
                     port: b.port,
                     health_path: health_path.clone(),
                     flag: b.healthy.clone(),
+                    addrs: b.addrs.clone(),
+                    active: b.active.clone(),
                 })
             })
             .collect()
@@ -95,12 +139,7 @@ impl HealthService {
 
         for p in probes {
             let addr = format!("{}:{}", p.host, p.port);
-            let pass = match &p.health_path {
-                Some(path) if !path.is_empty() => {
-                    http_probe(&addr, &p.host, path, self.connect_timeout).await
-                }
-                _ => tcp_probe(&addr, self.connect_timeout).await,
-            };
+            let pass = elect_and_probe(&p, self.connect_timeout).await;
 
             let (fails, passes) = streaks.entry(p.target_id).or_insert((0, 0));
             if pass {
@@ -130,6 +169,47 @@ impl HealthService {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn probe(addrs: Vec<SocketAddr>, active: usize) -> Probe {
+        Probe {
+            target_id: 1,
+            host: "test".into(),
+            port: 0,
+            health_path: None,
+            flag: Arc::new(AtomicBool::new(true)),
+            addrs,
+            active: Arc::new(AtomicUsize::new(active)),
+        }
+    }
+
+    /// A dead address on 127.0.0.1: bind a listener, note the port, drop it.
+    async fn dead_addr() -> SocketAddr {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        l.local_addr().unwrap()
+    }
+
+    #[tokio::test]
+    async fn elects_the_working_address_when_the_active_one_is_dead() {
+        let live = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let p = probe(vec![dead_addr().await, live.local_addr().unwrap()], 0);
+        assert!(elect_and_probe(&p, Duration::from_secs(1)).await);
+        assert_eq!(p.active.load(Ordering::Relaxed), 1);
+        // Subsequent checks start from (and keep) the elected address.
+        assert!(elect_and_probe(&p, Duration::from_secs(1)).await);
+        assert_eq!(p.active.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn fails_when_no_address_answers_or_none_resolved() {
+        let p = probe(vec![dead_addr().await], 0);
+        assert!(!elect_and_probe(&p, Duration::from_secs(1)).await);
+        assert!(!elect_and_probe(&probe(vec![], 0), Duration::from_secs(1)).await);
     }
 }
 

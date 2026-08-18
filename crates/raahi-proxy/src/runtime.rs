@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -18,6 +19,30 @@ pub struct BackendRt {
     pub port: u16,
     pub weight: u32,
     pub healthy: Arc<AtomicBool>,
+    /// Every address `host` resolved to at snapshot build (empty on resolution
+    /// failure). The proxy, the stream splicer, and the health checker all share
+    /// this one view — resolving independently let them disagree (e.g. `localhost`
+    /// as ::1 for the proxy but 127.0.0.1 for a passing health probe).
+    pub addrs: Vec<SocketAddr>,
+    /// Index into `addrs` of the address currently used for connects; the health
+    /// checker moves it to a working address when the current one fails probes.
+    pub active: Arc<AtomicUsize>,
+}
+
+impl BackendRt {
+    /// The address connects should use right now.
+    pub fn active_addr(&self) -> Option<SocketAddr> {
+        let i = self.active.load(Ordering::Relaxed);
+        self.addrs.get(i).or_else(|| self.addrs.first()).copied()
+    }
+
+    /// Display/connect string: the active resolved address, falling back to the
+    /// configured `host:port` when resolution failed.
+    pub fn addr_string(&self) -> String {
+        self.active_addr()
+            .map(|a| a.to_string())
+            .unwrap_or_else(|| format!("{}:{}", self.host, self.port))
+    }
 }
 
 /// Runtime state for one service: its settings, backends, and a round-robin cursor.
@@ -95,17 +120,44 @@ impl RuntimeConfig {
             let backends = targets
                 .into_iter()
                 .map(|t| {
-                    let healthy = prev
+                    // Carry health (and the elected address, if the target is
+                    // unchanged) across reloads so config edits don't reset state.
+                    let carried = prev
                         .and_then(|p| p.services.get(&sid))
-                        .and_then(|sr| sr.backends.iter().find(|b| b.target_id == t.id))
+                        .and_then(|sr| sr.backends.iter().find(|b| b.target_id == t.id));
+                    let healthy = carried
                         .map(|b| b.healthy.clone())
                         .unwrap_or_else(|| Arc::new(AtomicBool::new(true)));
+
+                    let addrs: Vec<SocketAddr> = match (t.host.as_str(), t.port).to_socket_addrs()
+                    {
+                        Ok(it) => it.collect(),
+                        Err(e) => {
+                            tracing::warn!(
+                                "target {}:{} does not resolve: {e}; it will fail health checks",
+                                t.host,
+                                t.port
+                            );
+                            Vec::new()
+                        }
+                    };
+                    let active = carried
+                        .filter(|b| b.host == t.host && b.port == t.port)
+                        .map(|b| b.active.clone())
+                        .unwrap_or_default();
+                    // Clamp a carried index that no longer fits the new list.
+                    if active.load(Ordering::Relaxed) >= addrs.len() {
+                        active.store(0, Ordering::Relaxed);
+                    }
+
                     BackendRt {
                         target_id: t.id,
                         host: t.host,
                         port: t.port,
                         weight: t.weight,
                         healthy,
+                        addrs,
+                        active,
                     }
                 })
                 .collect();
@@ -126,6 +178,39 @@ impl RuntimeConfig {
             services,
             plugins,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn backend(addrs: Vec<SocketAddr>, active: usize) -> BackendRt {
+        BackendRt {
+            target_id: 1,
+            host: "example.internal".into(),
+            port: 9000,
+            weight: 1,
+            healthy: Arc::new(AtomicBool::new(true)),
+            addrs,
+            active: Arc::new(AtomicUsize::new(active)),
+        }
+    }
+
+    #[test]
+    fn active_addr_uses_elected_index_and_clamps_out_of_range() {
+        let b = backend(
+            vec!["127.0.0.1:1".parse().unwrap(), "127.0.0.1:2".parse().unwrap()],
+            1,
+        );
+        assert_eq!(b.addr_string(), "127.0.0.1:2");
+        b.active.store(7, Ordering::Relaxed); // stale index: fall back to first
+        assert_eq!(b.addr_string(), "127.0.0.1:1");
+    }
+
+    #[test]
+    fn addr_string_falls_back_to_host_port_when_unresolved() {
+        assert_eq!(backend(vec![], 0).addr_string(), "example.internal:9000");
     }
 }
 

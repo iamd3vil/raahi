@@ -307,9 +307,15 @@ impl ProxyHttp for RaahiProxy {
         let sni = svc.tls_sni.clone().unwrap_or_else(|| backend.host.clone());
 
         ctx.upstream_host = Some(backend.host.clone());
-        ctx.upstream_addr = Some(format!("{}:{}", backend.host, backend.port));
+        ctx.upstream_addr = Some(backend.addr_string());
 
-        let mut peer = HttpPeer::new((backend.host.as_str(), backend.port), tls, sni);
+        // Connect to the health checker's elected address so both sides share one
+        // view of a multi-address host (e.g. localhost as ::1 vs 127.0.0.1). Fall
+        // back to the raw host:port only when resolution failed at snapshot build.
+        let mut peer = match backend.active_addr() {
+            Some(addr) => HttpPeer::new(addr, tls, sni),
+            None => HttpPeer::new((backend.host.as_str(), backend.port), tls, sni),
+        };
         peer.options.connection_timeout = Some(Duration::from_millis(svc.connect_timeout_ms));
         peer.options.read_timeout = Some(Duration::from_millis(svc.read_timeout_ms));
         peer.options.write_timeout = Some(Duration::from_millis(svc.write_timeout_ms));
@@ -329,7 +335,7 @@ impl ProxyHttp for RaahiProxy {
             let rc = self.config.load();
             if let Some(sr) = rc.services.get(&sid) {
                 for b in &sr.backends {
-                    if format!("{}:{}", b.host, b.port) == addr
+                    if b.addr_string() == addr
                         && b.healthy.swap(false, std::sync::atomic::Ordering::Relaxed)
                     {
                         tracing::warn!("health: {addr} marked down (connect failed: {peer})");

@@ -62,6 +62,9 @@ SQLite and atomically swapped into the running proxy with no restart.
 - **Health**: active checks per target (TCP connect, or HTTP GET on a per-service
   `health_path` with 2xx/3xx = pass) with consecutive-failure thresholds, plus
   passive circuit breaking — a failed connect ejects the backend immediately.
+  Multi-address hosts (e.g. `localhost` → ::1 + 127.0.0.1) are resolved once per
+  config snapshot; probes try every address and elect the working one, which the
+  proxy, L4 splicer, and health checks all share (`GET /api/v1/health` shows it).
 - **Declarative config**: `GET /api/v1/export` (optionally with secrets for a restorable
   backup) and `POST /api/v1/import` — a transactional full-replace with id remapping,
   usable for GitOps and disaster recovery.

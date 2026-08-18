@@ -132,7 +132,8 @@ impl ServerApp for StreamProxyApp {
             );
             return None;
         };
-        let addr = format!("{}:{}", backend.host, backend.port);
+        // Same elected address the health checker and HTTP proxy use.
+        let addr = backend.addr_string();
 
         let mut upstream = match self.connector.new_stream(&BasicPeer::new(&addr)).await {
             Ok(s) => s,

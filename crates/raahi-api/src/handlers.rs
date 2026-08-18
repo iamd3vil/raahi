@@ -931,6 +931,9 @@ pub async fn target_health(State(s): State<AppState>) -> Json<Value> {
                 "target_id": b.target_id,
                 "host": b.host,
                 "port": b.port,
+                // The concrete address probes and proxying currently use — shows
+                // which of a multi-address host (e.g. localhost) was elected.
+                "addr": b.addr_string(),
                 "healthy": b.healthy.load(std::sync::atomic::Ordering::Relaxed),
             }));
         }
