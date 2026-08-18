@@ -133,37 +133,38 @@ impl ProxyHttp for RaahiProxy {
     async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
         ctx.start = Some(Instant::now());
 
-        let (method, path, host, query, req_headers) = {
-            let req = session.req_header();
-            (
-                req.method.as_str().to_string(),
-                req.uri.path().to_string(),
-                req_host(req),
-                req.uri.query().map(|s| s.to_string()),
-                req.headers.clone(),
-            )
-        };
-        let client = client_ip(session);
-        ctx.client_ip = client.clone();
-        ctx.method = method.clone();
-        ctx.path = path.clone();
-        ctx.host = host.clone();
+        // Everything up to the plugin verdict borrows the request header in place
+        // (no HeaderMap clone on the hot path); session writes (error responses,
+        // compression module) happen after the borrow ends, driven by `verdict`.
+        enum Verdict {
+            NoRoute,
+            NoBackend,
+            Short(ShortResp),
+            Proceed,
+        }
 
-        // Match, validate backend, and run request-phase plugins — all under one read
-        // of the live config. Produces an optional short-circuit response.
-        let (short, compression_level): (Option<ShortResp>, Option<u32>) = {
+        let (verdict, compression_level): (Verdict, Option<u32>) = 'matched: {
+            let req = session.req_header();
+            ctx.client_ip = client_ip(session);
+            ctx.method = req.method.as_str().to_string();
+            ctx.path = req.uri.path().to_string();
+            ctx.host = req_host(req);
+            let query = req.uri.query();
+
+            // Match, validate backend, and run request-phase plugins — all under one
+            // read of the live config.
             let rc = self.config.load();
             let header = |name: &str| {
-                req_headers
+                req.headers
                     .get(name)
                     .and_then(|v| v.to_str().ok())
                     .map(|s| s.to_string())
             };
-            let Some(m) = rc.data.match_route(&host, &path, &method, &header) else {
-                session
-                    .respond_error_with_body(404, Bytes::from_static(b"Raahi: no matching route\n"))
-                    .await?;
-                return Ok(true);
+            let Some(m) = rc
+                .data
+                .match_route(&ctx.host, &ctx.path, &ctx.method, &header)
+            else {
+                break 'matched (Verdict::NoRoute, None);
             };
             let route_id = m.route.id;
             // Weighted traffic split: pick a service by round-robin over the split
@@ -206,25 +207,19 @@ impl ProxyHttp for RaahiProxy {
                 .map(|sr| !sr.backends.is_empty())
                 .unwrap_or(false);
             if !has_backend {
-                session
-                    .respond_error_with_body(
-                        502,
-                        Bytes::from_static(b"Raahi: no upstream backend\n"),
-                    )
-                    .await?;
-                return Ok(true);
+                break 'matched (Verdict::NoBackend, None);
             }
 
             let mut ordered: Vec<&Plugin> = rc.data.plugins_for(route_id, service_id);
             ordered.sort_by_key(|p| (type_priority(p.plugin_type), p.ordering, p.id));
 
             let input = ReqInput {
-                method: &method,
-                path: &path,
-                query: query.as_deref(),
-                host: &host,
-                client_ip: client.as_deref(),
-                headers: &req_headers,
+                method: &ctx.method,
+                path: &ctx.path,
+                query,
+                host: &ctx.host,
+                client_ip: ctx.client_ip.as_deref(),
+                headers: &req.headers,
                 route_id,
             };
 
@@ -250,8 +245,27 @@ impl ProxyHttp for RaahiProxy {
             ctx.resp_remove = effects.resp_remove;
             ctx.cache_store = effects.cache_store;
             ctx.body_transform = effects.body_transform;
-            (short, effects.compression_level)
+            match short {
+                Some(r) => (Verdict::Short(r), effects.compression_level),
+                None => (Verdict::Proceed, effects.compression_level),
+            }
         };
+
+        match verdict {
+            Verdict::NoRoute => {
+                session
+                    .respond_error_with_body(404, Bytes::from_static(b"Raahi: no matching route\n"))
+                    .await?;
+                return Ok(true);
+            }
+            Verdict::NoBackend => {
+                session
+                    .respond_error_with_body(502, Bytes::from_static(b"Raahi: no upstream backend\n"))
+                    .await?;
+                return Ok(true);
+            }
+            Verdict::Short(_) | Verdict::Proceed => {}
+        }
 
         // response-compression: hand the plugin's decision to Pingora's downstream
         // module. Its request filter has already run (before `request_filter`) and
@@ -268,7 +282,7 @@ impl ProxyHttp for RaahiProxy {
             }
         }
 
-        if let Some(mut r) = short {
+        if let Verdict::Short(mut r) = verdict {
             // Response-header effects staged by plugins that ran before the
             // short-circuit still apply (correlation ids, CORS headers on errors).
             for (k, v) in ctx.resp_add.drain(..) {
