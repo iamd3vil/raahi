@@ -18,7 +18,9 @@ export type PluginType =
   | 'request-transform'
   | 'response-transform'
   | 'response-body-transform'
-  | 'http-log';
+  | 'http-log'
+  | 'request-id'
+  | 'response-compression';
 export type PluginScope = 'global' | 'service' | 'route';
 export type CredentialType = 'key-auth' | 'basic-auth' | 'jwt';
 
@@ -203,6 +205,8 @@ export const PLUGIN_TYPES: PluginType[] = [
   'response-transform',
   'response-body-transform',
   'http-log',
+  'request-id',
+  'response-compression',
 ];
 
 export const PLUGIN_LABELS: Record<PluginType, string> = {
@@ -222,4 +226,6 @@ export const PLUGIN_LABELS: Record<PluginType, string> = {
   'response-transform': 'Response Transform',
   'response-body-transform': 'Body Transform',
   'http-log': 'HTTP Log',
+  'request-id': 'Request ID',
+  'response-compression': 'Compression',
 };

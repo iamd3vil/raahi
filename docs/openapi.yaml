@@ -846,7 +846,7 @@ components:
       enum: [round_robin, random, consistent, weighted]
     PluginType:
       type: string
-      enum: [key-auth, basic-auth, jwt, acl, ip-restriction, rate-limit, proxy-cache, request-size-limit, request-termination, redirect, cors, wasm, request-transform, response-transform, response-body-transform, http-log]
+      enum: [key-auth, basic-auth, jwt, acl, ip-restriction, rate-limit, proxy-cache, request-size-limit, request-termination, redirect, cors, wasm, request-transform, response-transform, response-body-transform, http-log, request-id, response-compression]
     PluginScope:
       type: string
       enum: [global, service, route]
@@ -930,7 +930,12 @@ components:
         service_id: {$ref: '#/components/schemas/Id'}
         priority: {type: integer, format: int32, default: 0}
         hosts: {type: array, default: [], items: {type: string}, example: [api.example.com, '*.internal.example.com']}
-        paths: {type: array, default: [], items: {type: string}, example: [/orders]}
+        paths:
+          type: array
+          default: []
+          items: {type: string}
+          example: [/orders, '~/users/\d+']
+          description: Literal prefixes (`/orders`, longest match wins) or `~`-prefixed regexes matched from the start of the path (`~/users/\d+`). `strip_path` strips exactly the matched portion.
         methods: {type: array, default: [], items: {type: string}, example: [GET, POST]}
         headers:
           type: object

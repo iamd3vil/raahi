@@ -470,7 +470,7 @@ impl Store {
 
         let version = self.version.fetch_add(1, Ordering::Relaxed) + 1;
 
-        Ok(ProxyConfig {
+        let mut cfg = ProxyConfig {
             version,
             routes,
             stream_routes,
@@ -482,7 +482,10 @@ impl Store {
             basic_index,
             jwt_index,
             wasm_modules,
+            path_regexes: Default::default(),
             settings,
-        })
+        };
+        cfg.compile_path_regexes();
+        Ok(cfg)
     }
 }

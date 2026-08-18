@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use crate::Id;
-use crate::matching::{host_matches, path_matches};
+use crate::matching::{compile_path_regex, host_matches, is_regex_path, path_matches};
 use crate::model::*;
 
 /// An immutable view of all routing configuration. Wrapped in an `ArcSwap` by the
@@ -31,6 +31,9 @@ pub struct ProxyConfig {
     pub jwt_index: HashMap<String, JwtCred>,
     /// WASM plugin modules by name (bytes shared with compiled instances).
     pub wasm_modules: HashMap<String, std::sync::Arc<Vec<u8>>>,
+    /// Compiled `~`-prefixed route path patterns, keyed by the raw pattern string.
+    /// Patterns that fail to compile are absent and never match.
+    pub path_regexes: HashMap<String, regex::Regex>,
     pub settings: Settings,
 }
 
@@ -45,16 +48,56 @@ pub struct JwtCred {
 }
 
 /// The result of matching a request against the routing table.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct RouteMatch<'a> {
     pub route: &'a Route,
     pub service: &'a Service,
-    /// The path prefix that matched (for `strip_path`). Empty if the route had no
-    /// path constraints.
-    pub matched_prefix: &'a str,
+    /// The leading portion of the request path that matched (for `strip_path`).
+    /// Empty if the route had no path constraints.
+    pub matched_prefix: String,
 }
 
 impl ProxyConfig {
+    /// Compile every `~`-prefixed route path pattern into [`Self::path_regexes`].
+    /// Invalid patterns (rejected by API validation, but reachable via import or
+    /// direct DB edits) are skipped and never match.
+    pub fn compile_path_regexes(&mut self) {
+        self.path_regexes.clear();
+        for route in &self.routes {
+            for p in route.paths.iter().filter(|p| is_regex_path(p)) {
+                if self.path_regexes.contains_key(p.as_str()) {
+                    continue;
+                }
+                match compile_path_regex(p) {
+                    Ok(re) => {
+                        self.path_regexes.insert(p.clone(), re);
+                    }
+                    Err(e) => {
+                        // No tracing dep in core; the API layer validates upfront.
+                        eprintln!(
+                            "raahi: route '{}' has invalid regex path {p:?}: {e}",
+                            route.name
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The number of leading bytes of `path` matched by one route path pattern,
+    /// or `None` if the pattern doesn't match.
+    fn path_match_len(&self, pattern: &str, path: &str) -> Option<usize> {
+        if is_regex_path(pattern) {
+            self.path_regexes
+                .get(pattern)
+                .and_then(|re| re.find(path))
+                .map(|m| m.end())
+        } else if path_matches(pattern, path) {
+            Some(pattern.trim_end_matches('/').len())
+        } else {
+            None
+        }
+    }
     /// Find the best route for `(host, path, method)` plus header conditions.
     ///
     /// `header` looks up a request header by name (implementations must treat the
@@ -97,26 +140,25 @@ impl ProxyConfig {
                 continue;
             }
 
-            // Longest matching path prefix for this route (empty paths => match all).
-            let matched_prefix: Option<&str> = if route.paths.is_empty() {
-                Some("")
+            // Longest match among this route's path patterns — literal prefixes and
+            // `~` regexes alike (empty paths => match all, zero length).
+            let matched_len: Option<usize> = if route.paths.is_empty() {
+                Some(0)
             } else {
                 route
                     .paths
                     .iter()
-                    .filter(|p| path_matches(p, path))
-                    .map(|p| p.as_str())
-                    .max_by_key(|p| p.trim_end_matches('/').len())
+                    .filter_map(|p| self.path_match_len(p, path))
+                    .max()
             };
 
-            let Some(prefix) = matched_prefix else {
+            let Some(prefix_len) = matched_len else {
                 continue;
             };
             let Some(service) = self.services.get(&route.service_id) else {
                 continue; // dangling service reference
             };
 
-            let prefix_len = prefix.trim_end_matches('/').len();
             let candidate = (
                 route.priority,
                 prefix_len,
@@ -124,7 +166,7 @@ impl ProxyConfig {
                 RouteMatch {
                     route,
                     service,
-                    matched_prefix: prefix,
+                    matched_prefix: path[..prefix_len].to_string(),
                 },
             );
 
@@ -244,11 +286,13 @@ mod tests {
     }
 
     fn cfg(routes: Vec<Route>, services: Vec<Service>) -> ProxyConfig {
-        ProxyConfig {
+        let mut c = ProxyConfig {
             services: services.into_iter().map(|s| (s.id, s)).collect(),
             routes,
             ..Default::default()
-        }
+        };
+        c.compile_path_regexes();
+        c
     }
 
     #[test]
@@ -302,6 +346,56 @@ mod tests {
         let c = cfg(vec![r], vec![svc(1)]);
         assert!(c.match_route("h", "/x", "POST", &no_hdrs).is_some());
         assert!(c.match_route("h", "/x", "get", &no_hdrs).is_none());
+    }
+
+    #[test]
+    fn regex_path_matches_and_reports_matched_portion() {
+        let c = cfg(vec![route(1, 1, 0, &[], &[r"~/users/\d+"])], vec![svc(1)]);
+        let m = c
+            .match_route("h", "/users/42/orders", "GET", &no_hdrs)
+            .unwrap();
+        assert_eq!(m.route.id, 1);
+        // strip_path strips exactly the regex-matched portion.
+        assert_eq!(m.matched_prefix, "/users/42");
+        assert!(c.match_route("h", "/users/abc", "GET", &no_hdrs).is_none());
+        assert!(c.match_route("h", "/other/42", "GET", &no_hdrs).is_none());
+    }
+
+    #[test]
+    fn regex_is_anchored_at_path_start() {
+        let c = cfg(vec![route(1, 1, 0, &[], &[r"~/v\d+"])], vec![svc(1)]);
+        assert!(c.match_route("h", "/v2/x", "GET", &no_hdrs).is_some());
+        // A mid-path occurrence must not match.
+        assert!(c.match_route("h", "/api/v2/x", "GET", &no_hdrs).is_none());
+    }
+
+    #[test]
+    fn regex_dollar_requires_full_path() {
+        let c = cfg(vec![route(1, 1, 0, &[], &[r"~/ping$"])], vec![svc(1)]);
+        assert!(c.match_route("h", "/ping", "GET", &no_hdrs).is_some());
+        assert!(c.match_route("h", "/ping/deep", "GET", &no_hdrs).is_none());
+    }
+
+    #[test]
+    fn longer_regex_match_beats_shorter_prefix() {
+        let c = cfg(
+            vec![
+                route(1, 1, 0, &[], &["/api"]),
+                route(2, 1, 0, &[], &[r"~/api/v\d+"]),
+            ],
+            vec![svc(1)],
+        );
+        let m = c
+            .match_route("h", "/api/v2/users", "GET", &no_hdrs)
+            .unwrap();
+        assert_eq!(m.route.id, 2);
+        assert_eq!(m.matched_prefix, "/api/v2");
+    }
+
+    #[test]
+    fn invalid_regex_never_matches() {
+        let c = cfg(vec![route(1, 1, 0, &[], &["~/users/("])], vec![svc(1)]);
+        assert!(c.match_route("h", "/users/(", "GET", &no_hdrs).is_none());
     }
 
     #[test]

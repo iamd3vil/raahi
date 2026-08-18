@@ -18,8 +18,10 @@ SQLite and atomically swapped into the running proxy with no restart.
 
 ## Features
 
-- **Routing** by host (exact + `*.wildcard`), path prefix (longest-match), method, and
-  **header conditions** (exact value or presence), with priorities.
+- **Routing** by host (exact + `*.wildcard`), path prefix (longest-match) or
+  **`~`-prefixed regex paths** (anchored at the path start; `strip_path` strips the
+  matched portion), method, and **header conditions** (exact value or presence),
+  with priorities.
 - **Traffic splitting / canary**: routes can split across services by weight
   (weighted round-robin per request).
 - **Load balancing** across weighted targets: round-robin, weighted, random, consistent-hash (by client IP).
@@ -36,6 +38,11 @@ SQLite and atomically swapped into the running proxy with no restart.
   - Traffic: `request-termination` (maintenance mode), `request-size-limit` (413),
     and `redirect` (301/302/307/308 with path preservation)
   - `cors` (preflight + response headers)
+  - `request-id` (correlation id: UUID v4 injected upstream and echoed downstream,
+    preserved from the client when present; runs first so even short-circuited
+    responses carry it)
+  - `response-compression` (gzip / brotli / zstd for downstream clients, negotiated
+    from `Accept-Encoding` by Pingora's built-in compression module)
   - `proxy-cache` (in-memory TTL response cache with `x-cache` headers and a purge API)
   - `request-transform` / `response-transform` (add / remove headers) and
     `response-body-transform` (find/replace on text bodies)

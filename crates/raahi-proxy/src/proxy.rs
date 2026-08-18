@@ -9,6 +9,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use bytes::Bytes;
 use pingora::http::{RequestHeader, ResponseHeader};
+use pingora::modules::http::HttpModules;
+use pingora::modules::http::compression::{ResponseCompression, ResponseCompressionBuilder};
 use pingora::prelude::*;
 use pingora::{Error, ErrorType};
 use raahi_core::{Id, Plugin, strip_prefix};
@@ -118,6 +120,16 @@ impl ProxyHttp for RaahiProxy {
         Ctx::default()
     }
 
+    /// Register Pingora's downstream response-compression module at level 0, i.e.
+    /// present but disabled: the `response-compression` plugin turns it on per
+    /// request in [`Self::request_filter`]. The module's body filter runs after
+    /// `ProxyHttp::response_body_filter` (see `Session::write_response_body`), so the
+    /// proxy-cache capture and the response-body transform always see — and store —
+    /// uncompressed bytes; compression is applied last, on the way downstream.
+    fn init_downstream_modules(&self, modules: &mut HttpModules) {
+        modules.add_module(ResponseCompressionBuilder::enable(0));
+    }
+
     async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
         ctx.start = Some(Instant::now());
 
@@ -139,7 +151,7 @@ impl ProxyHttp for RaahiProxy {
 
         // Match, validate backend, and run request-phase plugins — all under one read
         // of the live config. Produces an optional short-circuit response.
-        let short: Option<ShortResp> = {
+        let (short, compression_level): (Option<ShortResp>, Option<u32>) = {
             let rc = self.config.load();
             let header = |name: &str| {
                 req_headers
@@ -184,7 +196,7 @@ impl ProxyHttp for RaahiProxy {
             };
             ctx.route_id = Some(route_id);
             ctx.service_id = Some(service_id);
-            ctx.matched_prefix = m.matched_prefix.to_string();
+            ctx.matched_prefix = m.matched_prefix.clone();
             ctx.strip_path = m.route.strip_path;
             ctx.preserve_host = m.route.preserve_host;
 
@@ -238,10 +250,32 @@ impl ProxyHttp for RaahiProxy {
             ctx.resp_remove = effects.resp_remove;
             ctx.cache_store = effects.cache_store;
             ctx.body_transform = effects.body_transform;
-            short
+            (short, effects.compression_level)
         };
 
-        if let Some(r) = short {
+        // response-compression: hand the plugin's decision to Pingora's downstream
+        // module. Its request filter has already run (before `request_filter`) and
+        // bailed out early because the module was disabled, so the Accept-Encoding
+        // list still has to be fed in here, after enabling it.
+        if let Some(level) = compression_level {
+            let req = session.downstream_session.req_header().clone();
+            if let Some(c) = session
+                .downstream_modules_ctx
+                .get_mut::<ResponseCompression>()
+            {
+                c.adjust_level(level);
+                c.request_filter(&req);
+            }
+        }
+
+        if let Some(mut r) = short {
+            // Response-header effects staged by plugins that ran before the
+            // short-circuit still apply (correlation ids, CORS headers on errors).
+            for (k, v) in ctx.resp_add.drain(..) {
+                if !r.headers.iter().any(|(h, _)| h.eq_ignore_ascii_case(&k)) {
+                    r.headers.push((k, v));
+                }
+            }
             send_response(session, &r).await?;
             return Ok(true);
         }

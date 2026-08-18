@@ -80,6 +80,8 @@
     'response-transform': { add: {}, remove: [] },
     'response-body-transform': { replace: [], max_body_bytes: 1048576, content_types: ['text/', 'application/json'] },
     'http-log': { endpoint: '', headers: {}, batch_max: 50, flush_interval_ms: 2000 },
+    'request-id': { header_name: 'X-Request-Id', preserve: true, echo_downstream: true },
+    'response-compression': { level: 5 },
     wasm: { module: '', config: {}, fuel: 100000000 },
   };
 
@@ -99,6 +101,8 @@
     'response-transform': 'Adds or removes response headers before returning downstream.',
     'response-body-transform': 'Find/replace on text response bodies (buffered up to a size cap; binary passes through).',
     'http-log': 'POSTs request records (JSON batches) to an external collector, off the hot path.',
+    'request-id': 'Tags each request with a correlation id (UUID) forwarded upstream and echoed on the response.',
+    'response-compression': 'Compresses responses (gzip / brotli / zstd) for clients that advertise Accept-Encoding.',
     wasm: 'Runs an uploaded WASM module on requests and responses (sandboxed, fuel-metered). Multiple wasm plugins stack.',
   };
 
@@ -208,6 +212,13 @@
         batch_max: Number(cfg.batch_max) || 50,
         flush_interval_ms: Number(cfg.flush_interval_ms) || 2000,
       };
+    if (t === 'request-id')
+      return {
+        header_name: String(cfg.header_name || 'X-Request-Id'),
+        preserve: cfg.preserve !== false,
+        echo_downstream: cfg.echo_downstream !== false,
+      };
+    if (t === 'response-compression') return { level: Math.min(9, Math.max(1, Number(cfg.level) || 5)) };
     if (t === 'wasm') {
       let moduleConfig: unknown = cfg.config ?? {};
       if (typeof cfg.config_json === 'string') {
@@ -412,6 +423,10 @@
       }
       case 'http-log':
         return `→ ${c.endpoint || '—'}`;
+      case 'request-id':
+        return `header: ${c.header_name || 'X-Request-Id'}`;
+      case 'response-compression':
+        return `level: ${c.level ?? 5}`;
       case 'wasm':
         return `module: ${c.module || '—'}`;
     }
@@ -652,6 +667,26 @@
         <label for="hl-flush">Flush interval <span class="faint">(ms)</span></label>
         <input id="hl-flush" class="input" type="number" min="500" bind:value={cfg.flush_interval_ms} />
       </div>
+    </div>
+  {:else if form.type === 'request-id'}
+    <div class="field">
+      <label for="ri-header">Header name</label>
+      <input id="ri-header" class="input mono" bind:value={cfg.header_name} placeholder="X-Request-Id" />
+      <span class="hint">Set on the upstream request (and the response, if echoed below).</span>
+    </div>
+    <button class="opt" onclick={() => (cfg.preserve = !cfg.preserve)}>
+      <span class="toggle {cfg.preserve ? 'on' : ''}"></span> Keep an id the client already sent
+    </button>
+    <button class="opt" onclick={() => (cfg.echo_downstream = !cfg.echo_downstream)}>
+      <span class="toggle {cfg.echo_downstream ? 'on' : ''}"></span> Echo the id on the response
+    </button>
+  {:else if form.type === 'response-compression'}
+    <div class="field">
+      <label for="rc-level">Compression level</label>
+      <input id="rc-level" class="input" type="number" min="1" max="9" bind:value={cfg.level} />
+      <span class="hint">
+        1 (fastest) to 9 (smallest), applied to whichever algorithm the client accepts — gzip, brotli, or zstd.
+      </span>
     </div>
   {:else if form.type === 'wasm'}
     {#if modules.length === 0}

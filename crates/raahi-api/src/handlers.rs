@@ -127,10 +127,27 @@ pub async fn get_route(State(s): State<AppState>, Path(id): Path<Id>) -> ApiResu
         .ok_or(ApiError::NotFound)
 }
 
+/// Route paths must be absolute prefixes (`/api`) or compilable `~` regexes
+/// (`~/users/\d+`); anything else would silently never match.
+fn validate_route_paths(spec: &RouteSpec) -> ApiResult<()> {
+    for p in &spec.paths {
+        if raahi_core::is_regex_path(p) {
+            raahi_core::compile_path_regex(p)
+                .map_err(|e| ApiError::BadRequest(format!("invalid regex path {p:?}: {e}")))?;
+        } else if !p.starts_with('/') {
+            return Err(ApiError::BadRequest(format!(
+                "path {p:?} must start with '/' (or '~' for a regex path)"
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub async fn create_route(
     State(s): State<AppState>,
     Json(spec): Json<RouteSpec>,
 ) -> ApiResult<Json<Route>> {
+    validate_route_paths(&spec)?;
     ensure_split_services_exist(&s, &spec).await?;
     let r = s.store.create_route(&spec).await?;
     reload(&s).await?;
@@ -142,6 +159,7 @@ pub async fn update_route(
     Path(id): Path<Id>,
     Json(spec): Json<RouteSpec>,
 ) -> ApiResult<Json<Route>> {
+    validate_route_paths(&spec)?;
     ensure_split_services_exist(&s, &spec).await?;
     let r = s
         .store
@@ -382,6 +400,27 @@ fn validate_plugin(spec: &PluginSpec) -> ApiResult<()> {
                 return Err(ApiError::BadRequest(
                     "proxy-cache needs ttl_secs >= 1".into(),
                 ));
+            }
+        }
+        PluginType::RequestId => {
+            let name = spec.config["header_name"]
+                .as_str()
+                .unwrap_or("X-Request-Id");
+            if axum::http::header::HeaderName::from_bytes(name.as_bytes()).is_err() {
+                return Err(ApiError::BadRequest(format!(
+                    "request-id header_name {name:?} is not a valid header name"
+                )));
+            }
+        }
+        PluginType::ResponseCompression => {
+            // The level is applied to every algorithm the module may pick, so it has
+            // to stay within gzip's range; 0 would mean "disabled".
+            let level = spec.config["level"].as_u64().unwrap_or(5);
+            if level < 1 || level > raahi_proxy::MAX_COMPRESSION_LEVEL as u64 {
+                return Err(ApiError::BadRequest(format!(
+                    "response-compression level must be 1..={}",
+                    raahi_proxy::MAX_COMPRESSION_LEVEL
+                )));
             }
         }
         PluginType::ResponseBodyTransform => {

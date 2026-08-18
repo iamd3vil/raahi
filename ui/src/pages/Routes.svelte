@@ -263,8 +263,8 @@
     <input id="r-hosts" class="input" bind:value={form.hosts} placeholder="api.example.com, *.example.com" />
   </div>
   <div class="field">
-    <label for="r-paths">Path prefixes <span class="faint">(comma-separated)</span></label>
-    <input id="r-paths" class="input" bind:value={form.paths} placeholder="/api, /v1" />
+    <label for="r-paths">Paths <span class="faint">(comma-separated; prefixes, or ~regex matched from the start)</span></label>
+    <input id="r-paths" class="input" bind:value={form.paths} placeholder={'/api, /v1, ~/users/\\d+'} />
   </div>
   <div class="field">
     <label for="r-methods">Methods <span class="faint">(comma-separated, blank = any)</span></label>

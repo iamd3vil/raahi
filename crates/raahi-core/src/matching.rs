@@ -24,6 +24,22 @@ pub fn host_matches(pattern: &str, host: &str) -> bool {
     pattern.eq_ignore_ascii_case(host)
 }
 
+/// Whether a route path pattern is a regex pattern (Kong-style `~` prefix, e.g.
+/// `~/users/\d+`) rather than a literal prefix.
+pub fn is_regex_path(pattern: &str) -> bool {
+    pattern.starts_with('~')
+}
+
+/// Compile a `~`-prefixed route path pattern into an anchored regex.
+///
+/// The pattern matches from the start of the request path (an implicit `^`);
+/// it may match a leading portion only — `strip_path` strips exactly the
+/// matched portion. Use `$` to require a full-path match.
+pub fn compile_path_regex(pattern: &str) -> Result<regex::Regex, regex::Error> {
+    let pat = pattern.strip_prefix('~').unwrap_or(pattern);
+    regex::Regex::new(&format!("^(?:{pat})"))
+}
+
 /// Whether `path` is matched by the prefix `prefix`.
 ///
 /// A prefix matches when the path equals it, or continues with a `/` boundary, so

@@ -9,6 +9,7 @@ description = "Raahi core domain types, config snapshot, and router matching"
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
+regex = "1"
 
 [dev-dependencies]
 serde_json = { workspace = true }

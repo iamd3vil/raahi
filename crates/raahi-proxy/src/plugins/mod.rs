@@ -7,8 +7,10 @@ mod access;
 mod auth;
 mod bodytransform;
 mod cache;
+mod compression;
 mod cors;
 mod ratelimit;
+mod requestid;
 mod traffic;
 mod transform;
 mod wasm;
@@ -21,6 +23,7 @@ use serde::Deserialize;
 
 pub use bodytransform::BodyTransformCfg;
 pub use cache::{CacheIntent, purge_cache};
+pub use compression::MAX_LEVEL as MAX_COMPRESSION_LEVEL;
 pub use wasm::{validate_wasm, wat_to_wasm};
 
 /// Read-only request inputs handed to each plugin during the request phase.
@@ -55,6 +58,9 @@ pub struct Effects {
     pub cache_store: Option<CacheIntent>,
     /// response-body-transform: rewrite the response body with this config.
     pub body_transform: Option<BodyTransformCfg>,
+    /// response-compression: enable Pingora's downstream compression module at this
+    /// level (applied to the session by the proxy; plugins can't reach the session).
+    pub compression_level: Option<u32>,
 }
 
 /// A short-circuit response produced by a plugin (auth failure, rate limit, CORS
@@ -123,6 +129,8 @@ enum PluginInstance {
     ResponseTransform(transform::TransformCfg),
     ResponseBodyTransform(bodytransform::BodyTransformCfg),
     HttpLog(HttpLogCfg),
+    RequestId(requestid::RequestIdCfg),
+    ResponseCompression(compression::CompressionCfg),
 }
 
 /// Compiled plugin instances keyed by plugin id.
@@ -207,6 +215,12 @@ impl PluginSet {
                 PluginType::HttpLog => {
                     PluginInstance::HttpLog(serde_json::from_value(cfg()).unwrap_or_default())
                 }
+                PluginType::RequestId => {
+                    PluginInstance::RequestId(serde_json::from_value(cfg()).unwrap_or_default())
+                }
+                PluginType::ResponseCompression => PluginInstance::ResponseCompression(
+                    serde_json::from_value(cfg()).unwrap_or_default(),
+                ),
             };
             instances.insert(p.id, inst);
             configs.insert(p.id, p.config.clone());
@@ -251,6 +265,8 @@ impl PluginSet {
                 Action::Continue
             }
             PluginInstance::HttpLog(_) => Action::Continue, // consumed in the log phase
+            PluginInstance::RequestId(c) => requestid::request_id(c, input, effects),
+            PluginInstance::ResponseCompression(c) => compression::compress(c, effects),
         }
     }
 
@@ -283,20 +299,28 @@ impl PluginSet {
 /// to cached hits), then shaping, then transforms.
 pub fn type_priority(t: PluginType) -> u8 {
     match t {
-        PluginType::Cors => 0,
-        PluginType::IpRestriction => 1,
-        PluginType::Jwt | PluginType::KeyAuth | PluginType::BasicAuth => 2,
-        PluginType::Acl => 3,
-        PluginType::RequestSizeLimit => 4,
-        PluginType::RateLimit => 5,
-        PluginType::ProxyCache => 6,
-        PluginType::Wasm => 7,
-        PluginType::RequestTermination => 8,
-        PluginType::Redirect => 9,
-        PluginType::RequestTransform => 10,
-        PluginType::ResponseTransform => 11,
-        PluginType::ResponseBodyTransform => 12,
-        PluginType::HttpLog => 13,
+        // request-id runs before everything so short-circuited responses (auth
+        // failures, rate limits) still carry the correlation id.
+        PluginType::RequestId => 0,
+        // response-compression only arms Pingora's downstream compression module, so
+        // it runs early — before anything that can short-circuit (cache hits, auth
+        // errors, redirects), which then get compressed too. Where the compression
+        // itself happens in the body pipeline is fixed by the module, not by this.
+        PluginType::ResponseCompression => 1,
+        PluginType::Cors => 2,
+        PluginType::IpRestriction => 3,
+        PluginType::Jwt | PluginType::KeyAuth | PluginType::BasicAuth => 4,
+        PluginType::Acl => 5,
+        PluginType::RequestSizeLimit => 6,
+        PluginType::RateLimit => 7,
+        PluginType::ProxyCache => 8,
+        PluginType::Wasm => 9,
+        PluginType::RequestTermination => 10,
+        PluginType::Redirect => 11,
+        PluginType::RequestTransform => 12,
+        PluginType::ResponseTransform => 13,
+        PluginType::ResponseBodyTransform => 14,
+        PluginType::HttpLog => 15,
     }
 }
 

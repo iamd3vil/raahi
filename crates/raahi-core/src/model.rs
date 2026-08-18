@@ -178,6 +178,8 @@ pub enum PluginType {
     ResponseTransform,
     ResponseBodyTransform,
     HttpLog,
+    RequestId,
+    ResponseCompression,
 }
 
 impl PluginType {
@@ -199,6 +201,8 @@ impl PluginType {
             PluginType::ResponseTransform => "response-transform",
             PluginType::ResponseBodyTransform => "response-body-transform",
             PluginType::HttpLog => "http-log",
+            PluginType::RequestId => "request-id",
+            PluginType::ResponseCompression => "response-compression",
         }
     }
     pub fn from_str(s: &str) -> Option<Self> {
@@ -219,6 +223,8 @@ impl PluginType {
             "response-transform" => PluginType::ResponseTransform,
             "response-body-transform" => PluginType::ResponseBodyTransform,
             "http-log" => PluginType::HttpLog,
+            "request-id" => PluginType::RequestId,
+            "response-compression" => PluginType::ResponseCompression,
             _ => return None,
         })
     }
