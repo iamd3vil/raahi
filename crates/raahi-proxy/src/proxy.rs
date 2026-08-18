@@ -13,12 +13,12 @@ use pingora::modules::http::HttpModules;
 use pingora::modules::http::compression::{ResponseCompression, ResponseCompressionBuilder};
 use pingora::prelude::*;
 use pingora::{Error, ErrorType};
-use raahi_core::{Id, Plugin, strip_prefix};
+use raahi_core::{Id, strip_prefix};
 
 use crate::httplog::{LogEvent, LogSender};
 use crate::metrics::{Metrics, RequestRecord};
 use crate::plugins::{
-    Action, BodyTransformCfg, CacheIntent, Effects, ReqInput, RespInput, ShortResp, type_priority,
+    Action, BodyTransformCfg, CacheIntent, Effects, ReqInput, RespInput, ShortResp,
 };
 use crate::runtime::ConfigHandle;
 
@@ -210,8 +210,7 @@ impl ProxyHttp for RaahiProxy {
                 break 'matched (Verdict::NoBackend, None);
             }
 
-            let mut ordered: Vec<&Plugin> = rc.data.plugins_for(route_id, service_id);
-            ordered.sort_by_key(|p| (type_priority(p.plugin_type), p.ordering, p.id));
+            let ordered = rc.plugins_ordered(route_id, service_id);
 
             let input = ReqInput {
                 method: &ctx.method,
@@ -225,7 +224,7 @@ impl ProxyHttp for RaahiProxy {
 
             let mut effects = Effects::default();
             let mut short = None;
-            for p in &ordered {
+            for p in ordered.iter() {
                 match rc
                     .plugins
                     .run_request(p, &input, rc.data.as_ref(), &mut effects)
@@ -419,10 +418,9 @@ impl ProxyHttp for RaahiProxy {
                     status: upstream_response.status.as_u16(),
                     headers: &input_headers,
                 };
-                let mut ordered = rc.data.plugins_for(rid, sid);
-                ordered.sort_by_key(|p| (type_priority(p.plugin_type), p.ordering, p.id));
+                let ordered = rc.plugins_ordered(rid, sid);
                 let mut effects = Effects::default();
-                for p in &ordered {
+                for p in ordered.iter() {
                     rc.plugins.run_response(p, &input, &mut effects);
                 }
                 ctx.resp_remove.extend(effects.resp_remove);
@@ -564,13 +562,15 @@ impl ProxyHttp for RaahiProxy {
         // http-log: forward the record to every applicable log plugin's collector.
         {
             let rc = self.config.load();
+            let chain; // keeps the matched chain alive for the borrow below
             let logs: Vec<&raahi_core::Plugin> = match (ctx.route_id, ctx.service_id) {
-                (Some(rid), Some(sid)) => rc
-                    .data
-                    .plugins_for(rid, sid)
-                    .into_iter()
-                    .filter(|p| p.plugin_type == raahi_core::PluginType::HttpLog)
-                    .collect(),
+                (Some(rid), Some(sid)) => {
+                    chain = rc.plugins_ordered(rid, sid);
+                    chain
+                        .iter()
+                        .filter(|p| p.plugin_type == raahi_core::PluginType::HttpLog)
+                        .collect()
+                }
                 // Unmatched requests are still visible to global log plugins.
                 _ => rc
                     .data

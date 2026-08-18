@@ -8,9 +8,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use arc_swap::ArcSwap;
-use raahi_core::{Id, LbAlgorithm, ProxyConfig, Service};
+use raahi_core::{Id, LbAlgorithm, Plugin, ProxyConfig, Service};
 
-use crate::plugins::PluginSet;
+use crate::plugins::{PluginSet, type_priority};
 
 /// A selectable backend with a shared, live-updated health flag.
 pub struct BackendRt {
@@ -108,6 +108,11 @@ pub struct RuntimeConfig {
     pub services: HashMap<Id, Arc<ServiceRuntime>>,
     /// Stateful plugin instances keyed by plugin id (rate-limit counters, etc.).
     pub plugins: PluginSet,
+    /// Plugin execution chains precompiled per (route, effective service) — scope
+    /// resolution and ordering (type priority, then `ordering`, then id) are done
+    /// once per snapshot instead of on every request. Split routes get one chain
+    /// per split service.
+    chains: HashMap<(Id, Id), Arc<Vec<Plugin>>>,
 }
 
 impl RuntimeConfig {
@@ -173,12 +178,51 @@ impl RuntimeConfig {
 
         let plugins = PluginSet::build(&data, prev.map(|p| &p.plugins));
 
+        let mut chains: HashMap<(Id, Id), Arc<Vec<Plugin>>> = HashMap::new();
+        for route in &data.routes {
+            let mut sids: Vec<Id> = vec![route.service_id];
+            sids.extend(
+                route
+                    .splits
+                    .iter()
+                    .map(|sp| sp.service_id)
+                    .filter(|sid| data.services.contains_key(sid)),
+            );
+            for sid in sids {
+                chains
+                    .entry((route.id, sid))
+                    .or_insert_with(|| Arc::new(ordered_plugins(&data, route.id, sid)));
+            }
+        }
+
         RuntimeConfig {
             data: Arc::new(data),
             services,
             plugins,
+            chains,
         }
     }
+
+    /// The precompiled, execution-ordered plugin chain for a matched (route,
+    /// service) pair. Falls back to computing it (never to skipping plugins —
+    /// that would bypass auth) if the pair is somehow absent from the map.
+    pub fn plugins_ordered(&self, route_id: Id, service_id: Id) -> Arc<Vec<Plugin>> {
+        match self.chains.get(&(route_id, service_id)) {
+            Some(c) => c.clone(),
+            None => Arc::new(ordered_plugins(&self.data, route_id, service_id)),
+        }
+    }
+}
+
+/// Scope-resolve and execution-order the plugins for one (route, service) pair.
+fn ordered_plugins(data: &ProxyConfig, route_id: Id, service_id: Id) -> Vec<Plugin> {
+    let mut v: Vec<Plugin> = data
+        .plugins_for(route_id, service_id)
+        .into_iter()
+        .cloned()
+        .collect();
+    v.sort_by_key(|p| (type_priority(p.plugin_type), p.ordering, p.id));
+    v
 }
 
 #[cfg(test)]
