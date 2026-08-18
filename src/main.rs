@@ -49,6 +49,11 @@ struct Cli {
     /// Directory of the built UI to serve from the admin API.
     #[arg(long, env = "RAAHI_UI_DIR", default_value = "ui/build")]
     ui_dir: PathBuf,
+
+    /// Worker threads for the proxy data plane (default: all CPU cores).
+    /// Pingora's own default is 1, which caps throughput at one core.
+    #[arg(long, env = "RAAHI_THREADS")]
+    threads: Option<usize>,
 }
 
 fn map_pingora<E: std::fmt::Display>(e: E) -> anyhow::Error {
@@ -163,9 +168,16 @@ fn main() -> anyhow::Result<()> {
         log_tx,
         split_counter: Default::default(),
     };
+    let threads = cli.threads.unwrap_or_else(|| {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    });
+
     let mut proxy_svc = http_proxy_service(&server.configuration, proxy);
+    proxy_svc.threads = Some(threads);
     proxy_svc.add_tcp(&http_addr);
-    info!("proxy HTTP listener on {http_addr}");
+    info!("proxy HTTP listener on {http_addr} ({threads} worker threads)");
 
     let https_addr = cli.https_addr.or_else(|| settings.proxy_https_addr.clone());
     if let Some(https_addr) = &https_addr {
@@ -194,6 +206,7 @@ fn main() -> anyhow::Result<()> {
         let app = StreamProxyApp::new(config.clone(), sr.listen_addr.clone());
         let mut stream_svc =
             pingora::services::listening::Service::new(format!("stream-{}", sr.name), app);
+        stream_svc.threads = Some(threads);
         stream_svc.add_tcp(&sr.listen_addr);
         server.add_service(stream_svc);
         info!(
