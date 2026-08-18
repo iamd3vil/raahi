@@ -6,6 +6,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// mimalloc: glibc malloc's arena futex serialized the worker threads under
+/// load (~15% of CPU in __lll_lock_*_private in profiles).
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use anyhow::Context;
 use clap::Parser;
 use pingora::prelude::*;

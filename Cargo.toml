@@ -20,6 +20,9 @@ clap = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+# Global allocator: glibc malloc's arena lock was ~15% of CPU under load
+# (profiled 2026-08; __lll_lock_*_private futex contention across workers).
+mimalloc = "0.1"
 
 [workspace]
 members = ["crates/*"]
@@ -63,4 +66,5 @@ rcgen = "0.13"
 
 [profile.release]
 opt-level = 3
-lto = "thin"
+lto = "fat"
+codegen-units = 1
