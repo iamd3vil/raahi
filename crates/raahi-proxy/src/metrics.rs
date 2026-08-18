@@ -68,6 +68,21 @@ struct RouteStats {
     latency_sum_us: u64,
 }
 
+/// Number of independently locked shards. Sixteen worker threads round-robining
+/// over 16 shards makes lock collisions rare; the shard count is a fixed power of
+/// two so the modulo is a mask.
+const SHARDS: usize = 16;
+
+/// The mutable per-request state, sharded to avoid a global lock on the hot path.
+/// Each shard holds a slice of the recent-request ring plus partial hit counters;
+/// readers merge all shards.
+#[derive(Default)]
+struct Shard {
+    recent: VecDeque<RequestRecord>,
+    route_hits: HashMap<Id, RouteStats>,
+    consumer_hits: HashMap<String, u64>,
+}
+
 pub struct Metrics {
     total: AtomicU64,
     class_2xx: AtomicU64,
@@ -76,9 +91,9 @@ pub struct Metrics {
     class_5xx: AtomicU64,
     no_route: AtomicU64,
     latency_sum_us: AtomicU64,
-    recent: Mutex<VecDeque<RequestRecord>>,
-    route_hits: Mutex<HashMap<Id, RouteStats>>,
-    consumer_hits: Mutex<HashMap<String, u64>>,
+    shards: Vec<Mutex<Shard>>,
+    /// Round-robin cursor spreading writers across shards.
+    cursor: AtomicU64,
     tx: broadcast::Sender<RequestRecord>,
 }
 
@@ -93,9 +108,8 @@ impl Default for Metrics {
             class_5xx: AtomicU64::new(0),
             no_route: AtomicU64::new(0),
             latency_sum_us: AtomicU64::new(0),
-            recent: Mutex::new(VecDeque::with_capacity(RECENT_CAP)),
-            route_hits: Mutex::new(HashMap::new()),
-            consumer_hits: Mutex::new(HashMap::new()),
+            shards: (0..SHARDS).map(|_| Mutex::new(Shard::default())).collect(),
+            cursor: AtomicU64::new(0),
             tx,
         }
     }
@@ -111,7 +125,9 @@ impl Metrics {
         self.tx.subscribe()
     }
 
-    /// Record a completed request: bump counters, push to the ring buffer, broadcast.
+    /// Record a completed request: bump counters, update one shard, broadcast.
+    /// One shard lock and zero clones on the hot path (the record is cloned only
+    /// when an SSE subscriber is actually listening).
     pub fn record(&self, rec: RequestRecord) {
         self.total.fetch_add(1, Ordering::Relaxed);
         match rec.status / 100 {
@@ -127,36 +143,46 @@ impl Metrics {
         self.latency_sum_us
             .fetch_add((rec.latency_ms * 1000.0) as u64, Ordering::Relaxed);
 
-        if let Some(rid) = rec.route_id {
-            if let Ok(mut hits) = self.route_hits.lock() {
-                let s = hits.entry(rid).or_default();
+        if self.tx.receiver_count() > 0 {
+            // Lagging/closed subscribers are fine to drop.
+            let _ = self.tx.send(rec.clone());
+        }
+
+        let i = self.cursor.fetch_add(1, Ordering::Relaxed) as usize % SHARDS;
+        if let Ok(mut shard) = self.shards[i].lock() {
+            if let Some(rid) = rec.route_id {
+                let s = shard.route_hits.entry(rid).or_default();
                 s.count += 1;
                 if rec.status >= 400 {
                     s.errors += 1;
                 }
                 s.latency_sum_us += (rec.latency_ms * 1000.0) as u64;
             }
-        }
-        if let Some(consumer) = &rec.consumer {
-            if let Ok(mut hits) = self.consumer_hits.lock() {
-                *hits.entry(consumer.clone()).or_insert(0) += 1;
+            if let Some(consumer) = &rec.consumer {
+                if let Some(n) = shard.consumer_hits.get_mut(consumer.as_str()) {
+                    *n += 1;
+                } else {
+                    shard.consumer_hits.insert(consumer.clone(), 1);
+                }
             }
-        }
-        if let Ok(mut recent) = self.recent.lock() {
-            if recent.len() == RECENT_CAP {
-                recent.pop_back();
+            if shard.recent.len() >= RECENT_CAP.div_ceil(SHARDS) {
+                shard.recent.pop_back();
             }
-            recent.push_front(rec.clone());
+            shard.recent.push_front(rec);
         }
-        // Lagging/closed subscribers are fine to drop.
-        let _ = self.tx.send(rec);
     }
 
+    /// Most recent requests across all shards, newest first.
     pub fn recent(&self, limit: usize) -> Vec<RequestRecord> {
-        self.recent
-            .lock()
-            .map(|r| r.iter().take(limit).cloned().collect())
-            .unwrap_or_default()
+        let mut all: Vec<RequestRecord> = Vec::with_capacity(limit.min(RECENT_CAP) * 2);
+        for shard in &self.shards {
+            if let Ok(s) = shard.lock() {
+                all.extend(s.recent.iter().cloned());
+            }
+        }
+        all.sort_by(|a, b| b.ts_ms.cmp(&a.ts_ms));
+        all.truncate(limit);
+        all
     }
 
     pub fn snapshot(&self) -> MetricsSnapshot {
@@ -168,54 +194,53 @@ impl Metrics {
             0.0
         };
 
-        // Percentiles over the bounded recent window.
-        let (p50, p95, p99) = self
-            .recent
-            .lock()
-            .map(|r| {
-                let mut lat: Vec<f64> = r.iter().map(|x| x.latency_ms).collect();
-                if lat.is_empty() {
-                    return (0.0, 0.0, 0.0);
-                }
-                lat.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-                let at = |p: f64| lat[((lat.len() - 1) as f64 * p) as usize];
-                (at(0.50), at(0.95), at(0.99))
-            })
-            .unwrap_or((0.0, 0.0, 0.0));
+        // Merge every shard's partial state: latencies for percentiles over the
+        // bounded recent window, plus per-route / per-consumer counters.
+        let mut lat: Vec<f64> = Vec::with_capacity(RECENT_CAP);
+        let mut routes: HashMap<Id, RouteStats> = HashMap::new();
+        let mut consumers: HashMap<String, u64> = HashMap::new();
+        for shard in &self.shards {
+            let Ok(s) = shard.lock() else { continue };
+            lat.extend(s.recent.iter().map(|x| x.latency_ms));
+            for (&rid, st) in &s.route_hits {
+                let agg = routes.entry(rid).or_default();
+                agg.count += st.count;
+                agg.errors += st.errors;
+                agg.latency_sum_us += st.latency_sum_us;
+            }
+            for (c, &n) in &s.consumer_hits {
+                *consumers.entry(c.clone()).or_insert(0) += n;
+            }
+        }
 
-        let mut top_routes: Vec<RouteHit> = self
-            .route_hits
-            .lock()
-            .map(|h| {
-                h.iter()
-                    .map(|(&route_id, s)| RouteHit {
-                        route_id,
-                        count: s.count,
-                        errors: s.errors,
-                        avg_latency_ms: if s.count > 0 {
-                            s.latency_sum_us as f64 / 1000.0 / s.count as f64
-                        } else {
-                            0.0
-                        },
-                    })
-                    .collect()
+        let (p50, p95, p99) = if lat.is_empty() {
+            (0.0, 0.0, 0.0)
+        } else {
+            lat.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let at = |p: f64| lat[((lat.len() - 1) as f64 * p) as usize];
+            (at(0.50), at(0.95), at(0.99))
+        };
+
+        let mut top_routes: Vec<RouteHit> = routes
+            .iter()
+            .map(|(&route_id, s)| RouteHit {
+                route_id,
+                count: s.count,
+                errors: s.errors,
+                avg_latency_ms: if s.count > 0 {
+                    s.latency_sum_us as f64 / 1000.0 / s.count as f64
+                } else {
+                    0.0
+                },
             })
-            .unwrap_or_default();
+            .collect();
         top_routes.sort_by(|a, b| b.count.cmp(&a.count));
         top_routes.truncate(5);
 
-        let mut top_consumers: Vec<ConsumerHit> = self
-            .consumer_hits
-            .lock()
-            .map(|h| {
-                h.iter()
-                    .map(|(c, &count)| ConsumerHit {
-                        consumer: c.clone(),
-                        count,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let mut top_consumers: Vec<ConsumerHit> = consumers
+            .into_iter()
+            .map(|(consumer, count)| ConsumerHit { consumer, count })
+            .collect();
         top_consumers.sort_by(|a, b| b.count.cmp(&a.count));
         top_consumers.truncate(5);
 
