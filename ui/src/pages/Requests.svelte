@@ -96,13 +96,13 @@
       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
         <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
       </svg>
-      <input class="input" placeholder="Filter by path, host, upstream, consumer…" bind:value={q} />
+      <input placeholder="Filter by path, host, upstream, consumer…" bind:value={q} />
     </div>
-    <select class="select" bind:value={method} style="max-width:110px">
+    <select bind:value={method} style="max-width:110px">
       <option value="">Method</option>
       {#each ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as m}<option value={m}>{m}</option>{/each}
     </select>
-    <select class="select" bind:value={statusClassFilter} style="max-width:120px">
+    <select bind:value={statusClassFilter} style="max-width:120px">
       <option value="">Status</option>
       <option value="2">2xx</option>
       <option value="3">3xx</option>
@@ -110,20 +110,20 @@
       <option value="5">5xx</option>
       <option value="err">4xx + 5xx</option>
     </select>
-    <select class="select" bind:value={routeFilter} style="max-width:150px">
+    <select bind:value={routeFilter} style="max-width:150px">
       <option value={0}>All routes</option>
       {#each routes as r}<option value={r.id}>{r.name}</option>{/each}
     </select>
   </div>
-  <button class="btn btn-sm" class:live={!paused} onclick={() => (paused = !paused)}>
+  <button class="outline small" class:live={!paused} onclick={() => (paused = !paused)}>
     <span class="dot {paused ? '' : 'ok'}"></span>
     {paused ? 'Paused' : 'Live'}
   </button>
 </div>
 
-<div class="panel">
+<div class="card">
   {#if loading}
-    <div class="empty"><span class="spinner"></span></div>
+    <div class="empty"><span aria-busy="true" data-spinner="small"></span></div>
   {:else if rows.length === 0}
     <EmptyState
       icon="M4 6h16M4 12h16M4 18h10"
@@ -132,8 +132,8 @@
     />
   {:else}
     <div class="count faint">{filtered.length.toLocaleString()} of {rows.length.toLocaleString()} recent requests</div>
-    <div class="table-wrap">
-      <table class="table log">
+    <div class="table">
+      <table class="log">
         <thead>
           <tr>
             <th>Time</th><th>Status</th><th>Method</th><th>Host</th><th>Path</th>
@@ -184,7 +184,7 @@
     </div>
   {/if}
   {#snippet footer()}
-    <button class="btn btn-ghost" onclick={() => (open = false)}>Close</button>
+    <button class="ghost" onclick={() => (open = false)}>Close</button>
   {/snippet}
 </Drawer>
 
@@ -200,7 +200,11 @@
     min-width: 220px;
     max-width: 380px;
   }
-  .btn.live {
+  /* Oat adds margin-block-start to selects; keep the filter row tight. */
+  .filters select {
+    margin-block-start: 0;
+  }
+  button.live {
     border-color: rgba(52, 211, 153, 0.4);
   }
   .count {
@@ -236,7 +240,7 @@
     margin: 18px 0 0;
   }
   .detail dt {
-    color: var(--faint);
+    color: var(--faint-foreground);
     font-size: 12.5px;
     font-weight: 550;
   }
@@ -250,9 +254,9 @@
     align-items: baseline;
     gap: 12px;
     padding: 14px;
-    background: var(--surface-2);
+    background: var(--muted);
     border: 1px solid var(--border);
-    border-radius: var(--r-md);
+    border-radius: var(--radius-medium);
     word-break: break-all;
   }
   .big {

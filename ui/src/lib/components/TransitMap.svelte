@@ -62,7 +62,7 @@
       d += ` C ${COL_S + BOX_W / 2 + 80} ${sy}, ${COL_T - BOX_W / 2 - 80} ${ty}, ${COL_T - BOX_W / 2} ${ty}`;
     }
     const color =
-      ev.status >= 500 ? 'var(--err)' : ev.status >= 400 ? 'var(--warn)' : 'var(--accent)';
+      ev.status >= 500 ? 'var(--danger)' : ev.status >= 400 ? 'var(--warning)' : 'var(--primary)';
     const id = ++dotId;
     dots.push({ id, d, color });
     if (dots.length > 60) dots.shift();
@@ -123,7 +123,7 @@
         <g transform="translate({COL_T - BOX_W / 2}, {p.y - 14})">
           <title>{p.t.host}:{p.t.port} — {!p.t.enabled ? 'disabled' : isUp(p.t) ? 'healthy' : 'unhealthy'}</title>
           <rect width={BOX_W} height="28" rx="9" class="node tgt" class:down={!isUp(p.t)} />
-          <circle cx="14" cy="14" r="4" fill={isUp(p.t) ? 'var(--ok)' : 'var(--err)'} />
+          <circle cx="14" cy="14" r="4" fill={isUp(p.t) ? 'var(--success)' : 'var(--danger)'} />
           <text x="26" y="18" class="node-label mono-text">{trunc(`${p.t.host}:${p.t.port}`, 14)}</text>
         </g>
       {/each}
@@ -142,7 +142,7 @@
     display: block;
   }
   .col-label {
-    fill: var(--faint);
+    fill: var(--faint-foreground);
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.12em;
@@ -150,29 +150,29 @@
   }
   .edge {
     fill: none;
-    stroke: var(--border-strong);
+    stroke: var(--input);
     stroke-width: 1.5;
     opacity: 0.5;
   }
   .node {
-    fill: var(--surface-2);
-    stroke: var(--border-strong);
+    fill: var(--muted);
+    stroke: var(--input);
     stroke-width: 1;
   }
   .node.svc {
-    stroke: color-mix(in srgb, var(--accent) 45%, transparent);
+    stroke: color-mix(in srgb, var(--primary) 45%, transparent);
   }
   .node.tgt.down {
     opacity: 0.5;
   }
   .node-label {
-    fill: var(--text);
+    fill: var(--foreground);
     font-size: 12px;
     font-weight: 550;
-    font-family: var(--font);
+    font-family: var(--font-sans);
   }
   .mono-text {
-    font-family: var(--mono);
+    font-family: var(--font-mono);
     font-size: 11px;
   }
   .flow {

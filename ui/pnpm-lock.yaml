@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@knadh/oat':
+        specifier: 0.7.2
+        version: 0.7.2
     devDependencies:
       '@sveltejs/vite-plugin-svelte':
         specifier: ^5.0.3
@@ -200,6 +204,9 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
+
+  '@knadh/oat@0.7.2':
+    resolution: {integrity: sha512-Usy+zPyi/NdIOwilL9xrisLccp0A7gKzHc2MpkbFMsp6i0qlMfMLczapbpgmvROkfKMUwnh8iqL0E+Dc/UE6ZA==}
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
     resolution: {integrity: sha512-6o7ZLZK+BeenkZCFNDXqpbjw9bD6nuWonvS/lwQJp7NoVVxm6p3qE7qQ5jGuBjiFsgvqjD8mZAU5oWxTmbOeOg==}
@@ -662,6 +669,8 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  '@knadh/oat@0.7.2': {}
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
     optional: true

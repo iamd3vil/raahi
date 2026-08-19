@@ -165,61 +165,61 @@
 </script>
 
 {#if loading}
-  <div class="empty"><span class="spinner"></span></div>
+  <div class="empty"><span aria-busy="true" data-spinner="small"></span></div>
 {:else}
   <div class="cols">
     <div>
-      <div class="panel">
+      <div class="card">
         <div class="panel-head"><h2>Listeners</h2></div>
         <div class="row">
-          <div class="field">
-            <label for="s-http">Proxy HTTP address</label>
-            <input id="s-http" class="input mono" bind:value={form.proxy_http_addr} />
-          </div>
-          <div class="field">
-            <label for="s-https">Proxy HTTPS address</label>
-            <input id="s-https" class="input mono" bind:value={form.proxy_https_addr} placeholder="(disabled)" />
-          </div>
+          <label data-field>
+            Proxy HTTP address
+            <input class="mono" bind:value={form.proxy_http_addr} />
+          </label>
+          <label data-field>
+            Proxy HTTPS address
+            <input class="mono" bind:value={form.proxy_https_addr} placeholder="(disabled)" />
+          </label>
         </div>
-        <div class="field">
-          <label for="s-admin">Admin API address</label>
-          <input id="s-admin" class="input mono" bind:value={form.admin_addr} />
-        </div>
+        <label data-field>
+          Admin API address
+          <input class="mono" bind:value={form.admin_addr} />
+        </label>
         <p class="hint">Listener addresses are bound at startup — changing them requires a restart.</p>
       </div>
 
-      <div class="panel" style="margin-top:16px">
+      <div class="card" style="margin-top:16px">
         <div class="panel-head"><h2>Defaults & TLS</h2></div>
         <div class="row">
-          <div class="field">
-            <label for="s-lb">Default load balancing</label>
-            <select id="s-lb" class="select" bind:value={form.default_lb}>
+          <label data-field>
+            Default load balancing
+            <select bind:value={form.default_lb}>
               <option value="round_robin">round_robin</option>
               <option value="weighted">weighted</option>
               <option value="random">random</option>
               <option value="consistent">consistent (by client IP)</option>
             </select>
-          </div>
-          <div class="field">
-            <label for="s-cert">Default TLS certificate</label>
-            <select id="s-cert" class="select" bind:value={form.active_certificate_id}>
+          </label>
+          <label data-field>
+            Default TLS certificate
+            <select bind:value={form.active_certificate_id}>
               <option value={null}>— none —</option>
               {#each certs as c}<option value={c.id}>{c.name}</option>{/each}
             </select>
-            <span class="hint">Fallback when no certificate matches the SNI. Applies live.</span>
-          </div>
+            <span data-hint>Fallback when no certificate matches the SNI. Applies live.</span>
+          </label>
         </div>
         <div style="margin-top:8px">
-          <button class="btn btn-primary" onclick={save}>Save settings</button>
+          <button onclick={save}>Save settings</button>
         </div>
       </div>
     </div>
 
     <div>
-      <div class="panel">
+      <div class="card">
         <div class="panel-head">
           <h2>Running configuration</h2>
-          <button class="btn btn-sm" onclick={purgeCache} title="Drop every proxy-cache entry">Purge cache</button>
+          <button class="outline small" onclick={purgeCache} title="Drop every proxy-cache entry">Purge cache</button>
         </div>
         {#if summary}
           <div class="sum-grid">
@@ -236,57 +236,57 @@
         {/if}
       </div>
 
-      <div class="panel" style="margin-top:16px">
+      <div class="card" style="margin-top:16px">
         <div class="panel-head">
           <h2>Admin access</h2>
-          <span class="badge {authEnabled ? 'ok' : 'warn'}">{authEnabled ? 'protected' : 'open'}</span>
+          <span class="badge" data-variant={authEnabled ? 'success' : 'warning'}>{authEnabled ? 'protected' : 'open'}</span>
         </div>
         <p class="muted" style="margin:0 0 12px">
           {#if authEnabled}
             The admin API requires a bearer token. Rotate it any time — the old token stops working immediately.
           {:else}
             The admin API is unauthenticated (loopback binding is the only protection). Generate a token to require
-            <span class="code">Authorization: Bearer …</span> on every request.
+            <code>Authorization: Bearer …</code> on every request.
           {/if}
         </p>
         {#if freshToken}
           <div class="token-box">
             <div class="hint" style="margin-bottom:6px">Your new token — store it now, it is not retrievable later:</div>
             <div class="token-row">
-              <code class="code token">{freshToken}</code>
-              <button class="btn btn-sm" onclick={copyToken}>Copy</button>
+              <code class="token">{freshToken}</code>
+              <button class="outline small" onclick={copyToken}>Copy</button>
             </div>
           </div>
         {/if}
         <div class="flex" style="gap:8px">
-          <button class="btn" onclick={generateToken}>{authEnabled ? 'Rotate token' : 'Generate token'}</button>
+          <button class="outline" onclick={generateToken}>{authEnabled ? 'Rotate token' : 'Generate token'}</button>
           {#if authEnabled}
-            <button class="btn btn-danger" onclick={disableAuth}>Disable auth</button>
+            <button class="ghost" data-variant="danger" onclick={disableAuth}>Disable auth</button>
           {/if}
         </div>
       </div>
 
-      <div class="panel" style="margin-top:16px">
+      <div class="card" style="margin-top:16px">
         <div class="panel-head"><h2>Backup & restore</h2></div>
         <p class="muted" style="margin:0 0 10px">
           Export the full configuration as one JSON document, or import one to
           <strong>replace</strong> the running configuration declaratively.
         </p>
-        <button class="opt" style="padding-top:0" onclick={() => (includeSecrets = !includeSecrets)}>
-          <span class="toggle {includeSecrets ? 'on' : ''}"></span>
+        <label>
+          <input type="checkbox" role="switch" checked={includeSecrets} onchange={() => (includeSecrets = !includeSecrets)} />
           Include secrets (restorable backup: cert keys, credential hashes)
-        </button>
+        </label>
         <div class="flex" style="gap:8px; margin-top:8px">
-          <button class="btn" onclick={exportConfig} disabled={exporting}>
-            {#if exporting}<span class="spinner"></span>{:else}
+          <button class="outline" onclick={exportConfig} disabled={exporting}>
+            {#if exporting}<span aria-busy="true" data-spinner="small"></span>{:else}
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
               </svg>
             {/if}
             Export
           </button>
-          <label class="btn" class:disabled={importing}>
-            {#if importing}<span class="spinner"></span>{:else}
+          <label class="import-btn" class:disabled={importing}>
+            {#if importing}<span aria-busy="true" data-spinner="small"></span>{:else}
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 15V3m0 0 4 4m-4-4-4 4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
               </svg>
@@ -313,9 +313,9 @@
     gap: 10px;
   }
   .sum {
-    background: var(--surface-2);
+    background: var(--muted);
     border: 1px solid var(--border);
-    border-radius: var(--r-md);
+    border-radius: var(--radius-medium);
     padding: 10px 12px;
     display: flex;
     flex-direction: column;
@@ -326,14 +326,14 @@
   }
   .sum-l {
     font-size: 11px;
-    color: var(--faint);
+    color: var(--faint-foreground);
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
   .token-box {
-    background: var(--surface-2);
+    background: var(--muted);
     border: 1px solid var(--border);
-    border-radius: var(--r-md);
+    border-radius: var(--radius-medium);
     padding: 12px;
     margin-bottom: 12px;
   }
@@ -345,6 +345,35 @@
   .token {
     word-break: break-all;
     flex: 1;
+  }
+  .hint {
+    font-size: 12.5px;
+    color: var(--muted-foreground);
+  }
+  /* The file-import control is a <label> wrapping a hidden input; Oat only
+     styles real buttons, so replicate its outline button look here. */
+  .import-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    font-size: var(--text-7);
+    font-weight: var(--font-medium);
+    line-height: var(--leading-normal);
+    white-space: nowrap;
+    color: var(--foreground);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-medium);
+    cursor: pointer;
+  }
+  .import-btn:hover {
+    background: var(--accent);
+  }
+  .import-btn.disabled {
+    opacity: 0.6;
+    pointer-events: none;
   }
   @media (max-width: 980px) {
     .cols {

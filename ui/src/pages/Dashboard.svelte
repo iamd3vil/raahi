@@ -89,7 +89,7 @@
   const maxHit = $derived(Math.max(...(metrics?.top_routes ?? []).map((r) => r.count), 1));
 </script>
 
-<div class="grid cards">
+<div class="cards">
   <div class="metric card">
     <div class="m-label">Total requests</div>
     <div class="m-value">{total.toLocaleString()}</div>
@@ -119,7 +119,7 @@
   </div>
 </div>
 
-<div class="panel" style="margin-top:16px">
+<div class="card" style="margin-top:16px">
   <div class="panel-head">
     <h2>Status distribution</h2>
     <span class="faint">{total.toLocaleString()} requests</span>
@@ -142,9 +142,9 @@
   </div>
 </div>
 
-<div class="grid main-grid" style="margin-top:16px">
+<div class="main-grid" style="margin-top:16px">
   <div class="left-col">
-    <div class="panel">
+    <div class="card">
       <div class="panel-head">
         <h2>Traffic flow</h2>
         <span class="faint">live · routes → services → targets</span>
@@ -153,7 +153,7 @@
     </div>
 
     <div class="bottom-grid" style="margin-top:16px">
-      <div class="panel">
+      <div class="card">
         <div class="panel-head">
           <h2>Top routes</h2>
           <span class="faint">count · errors · avg latency</span>
@@ -177,7 +177,7 @@
         {/if}
       </div>
 
-      <div class="panel">
+      <div class="card">
         <div class="panel-head">
           <h2>Top consumers</h2>
           <span class="faint">authenticated</span>
@@ -198,10 +198,10 @@
     </div>
   </div>
 
-  <div class="panel">
+  <div class="card">
     <div class="panel-head">
       <h2>Live requests</h2>
-      <span class="badge accent">● live</span>
+      <span class="badge">● live</span>
     </div>
     <div class="tail">
       {#if live.length === 0}
@@ -220,13 +220,15 @@
         {/each}
       {/if}
     </div>
-    <button class="btn btn-ghost btn-sm all-link" onclick={() => go('requests')}>View all requests →</button>
+    <button class="ghost small all-link" onclick={() => go('requests')}>View all requests →</button>
   </div>
 </div>
 
 <style>
   .cards {
+    display: grid;
     grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
   }
   .metric {
     padding: 18px;
@@ -239,7 +241,7 @@
   }
   .m-label {
     font-size: 12px;
-    color: var(--muted);
+    color: var(--muted-foreground);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     font-weight: 600;
@@ -253,11 +255,11 @@
     font-variant-numeric: tabular-nums;
   }
   .m-value.bad {
-    color: var(--err);
+    color: var(--danger);
   }
   .unit {
     font-size: 14px;
-    color: var(--faint);
+    color: var(--faint-foreground);
     font-weight: 500;
     margin-left: 5px;
   }
@@ -276,27 +278,27 @@
     min-width: 2px;
   }
   .seg.ok {
-    background: var(--ok);
+    background: var(--success);
   }
   .seg.info {
     background: var(--info);
   }
   .seg.warn {
-    background: var(--warn);
+    background: var(--warning);
   }
   .seg.err {
-    background: var(--err);
+    background: var(--danger);
   }
   .empty-seg {
     flex: 1;
-    background: var(--surface-3);
+    background: var(--secondary);
   }
   .legend {
     display: flex;
     gap: 18px;
     margin-top: 12px;
     font-size: 12.5px;
-    color: var(--muted);
+    color: var(--muted-foreground);
     flex-wrap: wrap;
   }
   .legend .sw {
@@ -308,19 +310,21 @@
     vertical-align: middle;
   }
   .sw.ok {
-    background: var(--ok);
+    background: var(--success);
   }
   .sw.info {
     background: var(--info);
   }
   .sw.warn {
-    background: var(--warn);
+    background: var(--warning);
   }
   .sw.err {
-    background: var(--err);
+    background: var(--danger);
   }
   .main-grid {
+    display: grid;
     grid-template-columns: 1.4fr 1fr;
+    gap: 16px;
     align-items: start;
   }
   .toproutes {
@@ -334,6 +338,7 @@
     gap: 16px;
     align-items: start;
   }
+  /* Custom row button: fully override Oat's button styling. */
   .tr-row {
     display: grid;
     grid-template-columns: minmax(80px, 130px) 1fr auto;
@@ -344,24 +349,28 @@
     background: none;
     border-radius: 6px;
     font: inherit;
-    color: var(--text);
+    color: var(--foreground);
     cursor: pointer;
     text-align: left;
     width: 100%;
+    white-space: normal;
+  }
+  .tr-row:active {
+    transform: none;
   }
   .tr-row.consumers {
     grid-template-columns: 1fr auto;
   }
   .tr-stats {
     font-size: 12px;
-    color: var(--muted);
+    color: var(--muted-foreground);
     white-space: nowrap;
   }
   .err-text {
-    color: var(--err);
+    color: var(--danger);
   }
   .tr-row:hover {
-    background: var(--row-hover);
+    background: var(--muted);
   }
   .tr-name {
     font-weight: 550;
@@ -371,20 +380,20 @@
   }
   .tr-bar-wrap {
     height: 8px;
-    background: var(--surface-3);
+    background: var(--secondary);
     border-radius: 5px;
     overflow: hidden;
   }
   .tr-bar {
     display: block;
     height: 100%;
-    background: var(--accent);
+    background: var(--primary);
     border-radius: 5px;
     min-width: 3px;
   }
   .tr-count {
     font-size: 12px;
-    color: var(--muted);
+    color: var(--muted-foreground);
   }
   .tail {
     max-height: 480px;
@@ -403,7 +412,7 @@
     font-size: 13px;
   }
   .tail-row:hover {
-    background: var(--row-hover);
+    background: var(--muted);
   }
   .st {
     font-weight: 650;
@@ -411,7 +420,7 @@
   .mth {
     font-size: 11px;
     font-weight: 600;
-    color: var(--muted);
+    color: var(--muted-foreground);
   }
   .pth {
     overflow: hidden;
@@ -427,8 +436,7 @@
   .all-link {
     margin-top: 10px;
     width: 100%;
-    justify-content: center;
-    color: var(--muted);
+    color: var(--muted-foreground);
   }
   @media (max-width: 1000px) {
     .cards {

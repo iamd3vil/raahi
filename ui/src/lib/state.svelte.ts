@@ -22,7 +22,8 @@ export const ui = $state({
 });
 
 export function applyTheme() {
-  document.documentElement.setAttribute('data-theme', ui.theme);
+  // Oat themes via light-dark(); forcing color-scheme flips every variable.
+  document.documentElement.style.colorScheme = ui.theme;
 }
 
 export function toggleTheme() {
@@ -36,25 +37,16 @@ export function go(view: View) {
   location.hash = view;
 }
 
-// ---- toasts ----
-export interface Toast {
-  id: number;
-  msg: string;
-  kind: 'info' | 'ok' | 'err';
-}
-export const toasts = $state<Toast[]>([]);
-let toastId = 0;
-
-export function toast(msg: string, kind: Toast['kind'] = 'info') {
-  const id = ++toastId;
-  toasts.push({ id, msg, kind });
-  setTimeout(() => {
-    const i = toasts.findIndex((t) => t.id === id);
-    if (i >= 0) toasts.splice(i, 1);
-  }, 4000);
+// ---- toasts (rendered by Oat's ot.toast) ----
+declare global {
+  interface Window {
+    ot: {
+      toast: (msg: string, title?: string, opts?: { variant?: string; placement?: string; duration?: number }) => void;
+    };
+  }
 }
 
-export function dismiss(id: number) {
-  const i = toasts.findIndex((t) => t.id === id);
-  if (i >= 0) toasts.splice(i, 1);
+export function toast(msg: string, kind: 'info' | 'ok' | 'err' = 'info') {
+  const variant = kind === 'ok' ? 'success' : kind === 'err' ? 'danger' : 'info';
+  window.ot.toast(msg, undefined, { variant, placement: 'bottom-right' });
 }

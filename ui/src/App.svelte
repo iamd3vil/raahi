@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import { ui, applyTheme, toggleTheme, go, type View } from './lib/state.svelte';
   import { adminToken, api, setAdminToken } from './lib/api';
-  import Toasts from './lib/components/Toasts.svelte';
   import Dashboard from './pages/Dashboard.svelte';
   import Requests from './pages/Requests.svelte';
   import Routes from './pages/Routes.svelte';
@@ -149,7 +148,7 @@
         <h1>{titles[ui.view as View].title}</h1>
         <div class="topbar-sub">{titles[ui.view as View].sub}</div>
       </div>
-      <button class="btn btn-ghost btn-sm" onclick={toggleTheme} aria-label="Toggle theme" title="Toggle theme">
+      <button class="ghost small icon" onclick={toggleTheme} aria-label="Toggle theme" title="Toggle theme">
         {#if ui.theme === 'dark'}
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
             <circle cx="12" cy="12" r="4" />
@@ -205,27 +204,25 @@
       <h2>Admin token required</h2>
       <p class="muted">This admin API is protected. Paste your bearer token to continue.</p>
       <input
-        class="input mono"
+        class="mono"
         type="password"
         placeholder="admin token"
         bind:value={tokenInput}
         onkeydown={(e) => e.key === 'Enter' && login()}
       />
       {#if loginError}<div class="login-err">{loginError}</div>{/if}
-      <button class="btn btn-primary" style="width:100%" onclick={login} disabled={!tokenInput.trim()}>
+      <button style="width:100%" onclick={login} disabled={!tokenInput.trim()}>
         Unlock
       </button>
     </div>
   </div>
 {/if}
 
-<Toasts />
-
 <style>
   .login-overlay {
     position: fixed;
     inset: 0;
-    background: var(--bg);
+    background: var(--background);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -233,9 +230,9 @@
   }
   .login-card {
     width: min(380px, calc(100% - 32px));
-    background: var(--surface);
+    background: var(--card);
     border: 1px solid var(--border);
-    border-radius: var(--r-lg);
+    border-radius: var(--radius-large);
     padding: 24px;
     display: flex;
     flex-direction: column;
@@ -249,7 +246,7 @@
     font-size: 13px;
   }
   .login-err {
-    color: var(--err);
+    color: var(--danger);
     font-size: 13px;
   }
   .shell {
@@ -259,7 +256,7 @@
   }
   .sidebar {
     border-right: 1px solid var(--border);
-    background: var(--bg);
+    background: var(--background);
     display: flex;
     flex-direction: column;
     padding: 16px 10px 10px;
@@ -275,7 +272,7 @@
     width: 28px;
     height: 28px;
     border-radius: 7px;
-    background: var(--accent);
+    background: var(--primary);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -289,7 +286,7 @@
   }
   .brand-sub {
     font-size: 10.5px;
-    color: var(--faint);
+    color: var(--faint-foreground);
     text-transform: uppercase;
     letter-spacing: 0.08em;
   }
@@ -304,7 +301,7 @@
     font-size: 10.5px;
     text-transform: uppercase;
     letter-spacing: 0.12em;
-    color: var(--faint);
+    color: var(--faint-foreground);
     font-weight: 650;
     padding: 12px 12px 5px;
   }
@@ -314,12 +311,13 @@
   .nav-item {
     display: flex;
     align-items: center;
+    justify-content: flex-start;
     gap: 10px;
     padding: 7px 10px;
-    border-radius: var(--r-sm);
+    border-radius: var(--radius-medium);
     border: none;
     background: transparent;
-    color: var(--muted);
+    color: var(--muted-foreground);
     font: inherit;
     font-size: 13.5px;
     font-weight: 500;
@@ -328,11 +326,14 @@
     transition: background 0.12s ease, color 0.12s ease;
   }
   .nav-item:hover {
-    background: var(--surface-2);
-    color: var(--text);
+    background: var(--muted);
+    color: var(--foreground);
+  }
+  .nav-item:active {
+    transform: none;
   }
   .nav-item.active {
-    color: var(--accent-text);
+    color: var(--primary);
     background: var(--accent-soft);
     font-weight: 550;
   }
@@ -349,6 +350,7 @@
     flex-direction: column;
     height: 100%;
     overflow: hidden;
+    padding-block-start: 0;
   }
   .topbar {
     display: flex;
@@ -364,7 +366,7 @@
   }
   .topbar-sub {
     font-size: 12.5px;
-    color: var(--faint);
+    color: var(--faint-foreground);
     margin-top: 1px;
   }
   .content {

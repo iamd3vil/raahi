@@ -28,7 +28,7 @@
     <div class="drawer" role="dialog" aria-modal="true" tabindex="-1">
       <div class="head">
         <h2>{title}</h2>
-        <button class="btn btn-ghost btn-sm" onclick={close} aria-label="Close">✕</button>
+        <button class="ghost small icon" onclick={close} aria-label="Close">✕</button>
       </div>
       <div class="body">
         {@render children()}
@@ -54,9 +54,9 @@
   .drawer {
     width: min(480px, 100%);
     height: 100%;
-    background: var(--surface);
-    border-left: 1px solid var(--border-strong);
-    box-shadow: var(--shadow-2);
+    background: var(--card);
+    border-left: 1px solid var(--input);
+    box-shadow: var(--shadow-large);
     display: flex;
     flex-direction: column;
     animation: slidein 0.2s cubic-bezier(0.22, 1, 0.36, 1);

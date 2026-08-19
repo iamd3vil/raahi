@@ -16,5 +16,8 @@
     "svelte-check": "^4.1.4",
     "typescript": "^5.7.3",
     "vite": "^6.0.7"
+  },
+  "dependencies": {
+    "@knadh/oat": "0.7.2"
   }
 }

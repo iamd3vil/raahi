@@ -61,19 +61,19 @@
 
 <div class="head-actions">
   <p class="muted">TLS certificates for the HTTPS listener, selected per request by SNI.</p>
-  <button class="btn btn-primary" onclick={openNew}>+ Add certificate</button>
+  <button onclick={openNew}>+ Add certificate</button>
 </div>
 
-<div class="note">
+<div role="alert">
   <strong>Note:</strong> Certificates are served by <strong>SNI</strong> — the HTTPS listener picks the
-  matching certificate per request (exact or <span class="code">*.wildcard</span>), falling back to the
-  active certificate set in <span class="code">Settings</span>. Certificate changes apply live (no restart)
+  matching certificate per request (exact or <code>*.wildcard</code>), falling back to the
+  active certificate set in <code>Settings</code>. Certificate changes apply live (no restart)
   while HTTPS is running.
 </div>
 
-<div class="panel">
+<div class="card">
   {#if loading}
-    <div class="empty"><span class="spinner"></span></div>
+    <div class="empty"><span aria-busy="true" data-spinner="small"></span></div>
   {:else if certs.length === 0}
     <EmptyState
       icon="M12 15a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0 0v6l-2-2-2 2-1-7m10 7-2-2-2 2"
@@ -81,12 +81,12 @@
       description="Add a PEM certificate + key to serve HTTPS. Certificates are matched per request by SNI and hot-reload without a restart."
     >
       {#snippet action()}
-        <button class="btn btn-primary" onclick={openNew}>+ Add your first certificate</button>
+        <button onclick={openNew}>+ Add your first certificate</button>
       {/snippet}
     </EmptyState>
   {:else}
-    <div class="table-wrap">
-      <table class="table">
+    <div class="table">
+      <table>
         <thead><tr><th>Name</th><th>SNI</th><th>ID</th><th></th></tr></thead>
         <tbody>
           {#each certs as c (c.id)}
@@ -98,7 +98,7 @@
               </td>
               <td class="mono">#{c.id}</td>
               <td class="actions">
-                <button class="btn btn-sm btn-danger" onclick={() => del(c)}>Delete</button>
+                <button class="ghost small" data-variant="danger" onclick={() => del(c)}>Delete</button>
               </td>
             </tr>
           {/each}
@@ -109,39 +109,33 @@
 </div>
 
 <Drawer bind:open title="Add certificate">
-  <div class="field">
-    <label for="cert-name">Name</label>
-    <input id="cert-name" class="input" bind:value={form.name} placeholder="wildcard-2026" />
-  </div>
-  <div class="field">
-    <label for="cert-sni">SNI hostnames <span class="faint">(comma-separated, optional)</span></label>
-    <input id="cert-sni" class="input" bind:value={form.sni} placeholder="*.example.com" />
-  </div>
-  <div class="field">
-    <label for="cert-pem">Certificate (PEM)</label>
-    <textarea id="cert-pem" class="textarea" rows="6" bind:value={form.cert_pem} placeholder="-----BEGIN CERTIFICATE-----"></textarea>
-  </div>
-  <div class="field">
-    <label for="key-pem">Private key (PEM)</label>
-    <textarea id="key-pem" class="textarea" rows="6" bind:value={form.key_pem} placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
-    <span class="hint">Stored securely; never returned by the API.</span>
-  </div>
+  <label data-field>
+    Name
+    <input bind:value={form.name} placeholder="wildcard-2026" />
+  </label>
+  <label data-field>
+    SNI hostnames <span class="faint">(comma-separated, optional)</span>
+    <input bind:value={form.sni} placeholder="*.example.com" />
+  </label>
+  <label data-field>
+    Certificate (PEM)
+    <textarea rows="6" bind:value={form.cert_pem} placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+  </label>
+  <label data-field>
+    Private key (PEM)
+    <textarea rows="6" bind:value={form.key_pem} placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
+    <span data-hint>Stored securely; never returned by the API.</span>
+  </label>
 
   {#snippet footer()}
-    <button class="btn btn-ghost" onclick={() => (open = false)}>Cancel</button>
-    <button class="btn btn-primary" onclick={save}>Add</button>
+    <button class="ghost" onclick={() => (open = false)}>Cancel</button>
+    <button onclick={save}>Add</button>
   {/snippet}
 </Drawer>
 
 <style>
-  .head-actions {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+  [role='alert'] {
     margin-bottom: 16px;
-    gap: 12px;
-  }
-  .actions {
-    text-align: right;
+    font-size: 13px;
   }
 </style>

@@ -437,12 +437,12 @@
 
 <div class="head-actions">
   <p class="muted">Middleware applied per route, per service, or globally — ordered, hot-reloaded.</p>
-  <button class="btn btn-primary" onclick={openNew}>+ New plugin</button>
+  <button onclick={openNew}>+ New plugin</button>
 </div>
 
-<div class="panel">
+<div class="card">
   {#if loading}
-    <div class="empty"><span class="spinner"></span></div>
+    <div class="empty"><span aria-busy="true" data-spinner="small"></span></div>
   {:else if plugins.length === 0}
     <EmptyState
       icon="M10 3v4m4-4v4M5 7h14l-1 12a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 7z"
@@ -450,28 +450,28 @@
       description="Add auth, rate limiting, CORS, or header transforms. Plugins apply globally, to one service, or to one route."
     >
       {#snippet action()}
-        <button class="btn btn-primary" onclick={openNew}>+ Add your first plugin</button>
+        <button onclick={openNew}>+ Add your first plugin</button>
       {/snippet}
     </EmptyState>
   {:else}
-    <div class="table-wrap">
-      <table class="table">
+    <div class="table">
+      <table>
         <thead><tr><th>Type</th><th>Config</th><th>Scope</th><th>Order</th><th>Enabled</th><th></th></tr></thead>
         <tbody>
           {#each plugins as p (p.id)}
             {@const sc = scopeLabel(p)}
             <tr style:opacity={p.enabled ? 1 : 0.55}>
-              <td><span class="badge accent">{PLUGIN_LABELS[p.type]}</span></td>
+              <td><span class="badge">{PLUGIN_LABELS[p.type]}</span></td>
               <td class="mono cfg-sum">{summary(p)}</td>
               <td>
-                <span class="badge">{sc.kind}</span>
+                <span class="badge outline">{sc.kind}</span>
                 {#if p.scope !== 'global'}<span class="scope-name">{sc.name}</span>{/if}
               </td>
               <td class="mono">{p.ordering}</td>
-              <td><button class="toggle {p.enabled ? 'on' : ''}" aria-label="Toggle enabled" onclick={() => toggleEnabled(p)}></button></td>
+              <td><input type="checkbox" role="switch" aria-label="Toggle enabled" checked={p.enabled} onchange={() => toggleEnabled(p)} /></td>
               <td class="actions">
-                <button class="btn btn-sm btn-ghost" onclick={() => openEdit(p)}>Edit</button>
-                <button class="btn btn-sm btn-danger" onclick={() => del(p)}>Delete</button>
+                <button class="ghost small" onclick={() => openEdit(p)}>Edit</button>
+                <button class="ghost small" data-variant="danger" onclick={() => del(p)}>Delete</button>
               </td>
             </tr>
           {/each}
@@ -482,378 +482,388 @@
 </div>
 
 <Drawer bind:open title={editing ? `Edit ${PLUGIN_LABELS[form.type]}` : 'New plugin'}>
-  <div class="field">
-    <label for="p-type">Type</label>
-    <select id="p-type" class="select" value={form.type} disabled={!!editing}
+  <label data-field>
+    Type
+    <select value={form.type} disabled={!!editing}
       onchange={(e) => setType((e.currentTarget as HTMLSelectElement).value as PluginType)}>
       {#each PLUGIN_TYPES as t}<option value={t}>{PLUGIN_LABELS[t]}</option>{/each}
     </select>
-    <span class="hint">{HELP[form.type]}</span>
-  </div>
+    <span data-hint>{HELP[form.type]}</span>
+  </label>
 
   <div class="row">
-    <div class="field">
-      <label for="p-scope">Scope</label>
-      <select id="p-scope" class="select" bind:value={form.scope}>
+    <label data-field>
+      Scope
+      <select bind:value={form.scope}>
         <option value="global">Global (all routes)</option>
         <option value="service">Service</option>
         <option value="route">Route</option>
       </select>
-    </div>
+    </label>
     {#if form.scope === 'service'}
-      <div class="field">
-        <label for="p-svc">Service</label>
-        <select id="p-svc" class="select" bind:value={form.service_id}>
+      <label data-field>
+        Service
+        <select bind:value={form.service_id}>
           {#each services as s}<option value={s.id}>{s.name}</option>{/each}
         </select>
-      </div>
+      </label>
     {:else if form.scope === 'route'}
-      <div class="field">
-        <label for="p-route">Route</label>
-        <select id="p-route" class="select" bind:value={form.route_id}>
+      <label data-field>
+        Route
+        <select bind:value={form.route_id}>
           {#each routes as r}<option value={r.id}>{r.name}</option>{/each}
         </select>
-      </div>
+      </label>
     {:else}
-      <div class="field">
-        <label for="p-order">Ordering</label>
-        <input id="p-order" class="input" type="number" bind:value={form.ordering} />
-      </div>
+      <label data-field>
+        Ordering
+        <input type="number" bind:value={form.ordering} />
+      </label>
     {/if}
   </div>
 
   <div class="cfg-head">
     <span class="sub" style="margin:0">Configuration</span>
-    <button class="btn btn-ghost btn-sm" onclick={toggleRaw}>{rawMode ? 'Form editor' : 'Edit as JSON'}</button>
+    <button class="ghost small" onclick={toggleRaw}>{rawMode ? 'Form editor' : 'Edit as JSON'}</button>
   </div>
 
   {#if rawMode}
-    <div class="field">
-      <textarea class="textarea" rows="10" bind:value={form.config} aria-label="Plugin config JSON"></textarea>
+    <div data-field>
+      <textarea rows="10" bind:value={form.config} aria-label="Plugin config JSON"></textarea>
     </div>
   {:else if form.type === 'key-auth'}
-    <div class="field">
-      <label for="ka-keys">Key names <span class="faint">(header or query, comma-separated)</span></label>
-      <input id="ka-keys" class="input mono" value={cfg.key_names_csv ?? list(cfg.key_names)}
+    <label data-field>
+      Key names <span class="faint">(header or query, comma-separated)</span>
+      <input class="mono" value={cfg.key_names_csv ?? list(cfg.key_names)}
         oninput={(e) => (cfg.key_names_csv = (e.currentTarget as HTMLInputElement).value)} placeholder="apikey, x-api-key" />
-    </div>
-    <button class="opt" onclick={() => (cfg.hide_credentials = !cfg.hide_credentials)}>
-      <span class="toggle {cfg.hide_credentials ? 'on' : ''}"></span> Strip the credential before proxying upstream
-    </button>
+    </label>
+    <label class="opt">
+      <input type="checkbox" role="switch" checked={cfg.hide_credentials} onchange={() => (cfg.hide_credentials = !cfg.hide_credentials)} />
+      Strip the credential before proxying upstream
+    </label>
   {:else if form.type === 'basic-auth'}
-    <div class="field">
-      <label for="ba-realm">Realm</label>
-      <input id="ba-realm" class="input" bind:value={cfg.realm} placeholder="Raahi" />
-      <span class="hint">Shown in the browser's authentication prompt.</span>
-    </div>
+    <label data-field>
+      Realm
+      <input bind:value={cfg.realm} placeholder="Raahi" />
+      <span data-hint>Shown in the browser's authentication prompt.</span>
+    </label>
   {:else if form.type === 'jwt'}
     <div class="row">
-      <div class="field">
-        <label for="jwt-claim">Key claim</label>
-        <input id="jwt-claim" class="input mono" bind:value={cfg.key_claim_name} placeholder="iss" />
-        <span class="hint">Claim matched against consumers' jwt credentials.</span>
-      </div>
-      <div class="field">
-        <label for="jwt-params">Query params <span class="faint">(besides Bearer header)</span></label>
-        <input id="jwt-params" class="input mono" value={cfg.uri_param_names_csv ?? list(cfg.uri_param_names)}
+      <label data-field>
+        Key claim
+        <input class="mono" bind:value={cfg.key_claim_name} placeholder="iss" />
+        <span data-hint>Claim matched against consumers' jwt credentials.</span>
+      </label>
+      <label data-field>
+        Query params <span class="faint">(besides Bearer header)</span>
+        <input class="mono" value={cfg.uri_param_names_csv ?? list(cfg.uri_param_names)}
           oninput={(e) => (cfg.uri_param_names_csv = (e.currentTarget as HTMLInputElement).value)} placeholder="jwt" />
-      </div>
+      </label>
     </div>
-    <button class="opt" onclick={() => (cfg.require_exp = !cfg.require_exp)}>
-      <span class="toggle {cfg.require_exp ? 'on' : ''}"></span> Reject tokens without an exp claim
-    </button>
+    <label class="opt">
+      <input type="checkbox" role="switch" checked={cfg.require_exp} onchange={() => (cfg.require_exp = !cfg.require_exp)} />
+      Reject tokens without an exp claim
+    </label>
     <div class="row">
-      <div class="field">
-        <label for="jwt-jwks">JWKS URL <span class="faint">(optional — identity-provider mode)</span></label>
-        <input id="jwt-jwks" class="input mono" bind:value={cfg.jwks_url} placeholder="https://idp.example.com/.well-known/jwks.json" />
-        <span class="hint">
+      <label data-field>
+        JWKS URL <span class="faint">(optional — identity-provider mode)</span>
+        <input class="mono" bind:value={cfg.jwks_url} placeholder="https://idp.example.com/.well-known/jwks.json" />
+        <span data-hint>
           When set, RS256 tokens are verified against these keys (refreshed every 30s) instead of consumer
           credentials. Consumer identity comes from the claim below.
         </span>
-      </div>
-      <div class="field" style="flex:0 0 140px">
-        <label for="jwt-cclaim">Consumer claim</label>
-        <input id="jwt-cclaim" class="input mono" bind:value={cfg.consumer_claim} placeholder="sub" />
-      </div>
+      </label>
+      <label data-field style="flex:0 0 140px">
+        Consumer claim
+        <input class="mono" bind:value={cfg.consumer_claim} placeholder="sub" />
+      </label>
     </div>
   {:else if form.type === 'acl'}
-    <div class="field">
-      <label for="acl-allow">Allowed groups <span class="faint">(comma-separated; blank = allow all)</span></label>
-      <input id="acl-allow" class="input mono" value={cfg.allow_csv ?? list(cfg.allow)}
+    <label data-field>
+      Allowed groups <span class="faint">(comma-separated; blank = allow all)</span>
+      <input class="mono" value={cfg.allow_csv ?? list(cfg.allow)}
         oninput={(e) => (cfg.allow_csv = (e.currentTarget as HTMLInputElement).value)} placeholder="team-a, admins" />
-    </div>
-    <div class="field">
-      <label for="acl-deny">Denied groups <span class="faint">(checked first)</span></label>
-      <input id="acl-deny" class="input mono" value={cfg.deny_csv ?? list(cfg.deny)}
+    </label>
+    <label data-field>
+      Denied groups <span class="faint">(checked first)</span>
+      <input class="mono" value={cfg.deny_csv ?? list(cfg.deny)}
         oninput={(e) => (cfg.deny_csv = (e.currentTarget as HTMLInputElement).value)} placeholder="suspended" />
-      <span class="hint">Groups are set on each consumer. An auth plugin must run on the same route.</span>
-    </div>
+      <span data-hint>Groups are set on each consumer. An auth plugin must run on the same route.</span>
+    </label>
   {:else if form.type === 'ip-restriction'}
-    <div class="field">
-      <label for="ip-allow">Allowed IPs/CIDRs <span class="faint">(blank = allow all)</span></label>
-      <input id="ip-allow" class="input mono" value={cfg.allow_csv ?? list(cfg.allow)}
+    <label data-field>
+      Allowed IPs/CIDRs <span class="faint">(blank = allow all)</span>
+      <input class="mono" value={cfg.allow_csv ?? list(cfg.allow)}
         oninput={(e) => (cfg.allow_csv = (e.currentTarget as HTMLInputElement).value)} placeholder="10.0.0.0/8, 192.168.1.5" />
-    </div>
-    <div class="field">
-      <label for="ip-deny">Denied IPs/CIDRs <span class="faint">(checked first)</span></label>
-      <input id="ip-deny" class="input mono" value={cfg.deny_csv ?? list(cfg.deny)}
+    </label>
+    <label data-field>
+      Denied IPs/CIDRs <span class="faint">(checked first)</span>
+      <input class="mono" value={cfg.deny_csv ?? list(cfg.deny)}
         oninput={(e) => (cfg.deny_csv = (e.currentTarget as HTMLInputElement).value)} placeholder="203.0.113.0/24" />
-    </div>
+    </label>
     <div class="row">
-      <div class="field">
-        <label for="ip-status">Reject status</label>
-        <input id="ip-status" class="input" type="number" bind:value={cfg.status} />
-      </div>
-      <div class="field">
-        <label for="ip-msg">Reject message</label>
-        <input id="ip-msg" class="input" bind:value={cfg.message} />
-      </div>
+      <label data-field>
+        Reject status
+        <input type="number" bind:value={cfg.status} />
+      </label>
+      <label data-field>
+        Reject message
+        <input bind:value={cfg.message} />
+      </label>
     </div>
   {:else if form.type === 'request-size-limit'}
-    <div class="field">
-      <label for="sl-max">Max body size <span class="faint">(bytes)</span></label>
-      <input id="sl-max" class="input" type="number" min="1" bind:value={cfg.max_bytes} />
-      <span class="hint">Checked against Content-Length; {((Number(cfg.max_bytes) || 0) / 1048576).toFixed(1)} MB.</span>
-    </div>
-    <button class="opt" onclick={() => (cfg.require_content_length = !cfg.require_content_length)}>
-      <span class="toggle {cfg.require_content_length ? 'on' : ''}"></span> Reject chunked uploads without Content-Length (411)
-    </button>
+    <label data-field>
+      Max body size <span class="faint">(bytes)</span>
+      <input type="number" min="1" bind:value={cfg.max_bytes} />
+      <span data-hint>Checked against Content-Length; {((Number(cfg.max_bytes) || 0) / 1048576).toFixed(1)} MB.</span>
+    </label>
+    <label class="opt">
+      <input type="checkbox" role="switch" checked={cfg.require_content_length} onchange={() => (cfg.require_content_length = !cfg.require_content_length)} />
+      Reject chunked uploads without Content-Length (411)
+    </label>
   {:else if form.type === 'request-termination'}
     <div class="row">
-      <div class="field" style="flex:0 0 110px">
-        <label for="rt-status">Status</label>
-        <input id="rt-status" class="input" type="number" bind:value={cfg.status} />
-      </div>
-      <div class="field">
-        <label for="rt-msg">Message</label>
-        <input id="rt-msg" class="input" bind:value={cfg.message} />
-      </div>
+      <label data-field style="flex:0 0 110px">
+        Status
+        <input type="number" bind:value={cfg.status} />
+      </label>
+      <label data-field>
+        Message
+        <input bind:value={cfg.message} />
+      </label>
     </div>
-    <div class="field">
-      <label for="rt-ct">Content-Type</label>
-      <input id="rt-ct" class="input mono" bind:value={cfg.content_type} />
-    </div>
+    <label data-field>
+      Content-Type
+      <input class="mono" bind:value={cfg.content_type} />
+    </label>
   {:else if form.type === 'redirect'}
     <div class="row">
-      <div class="field" style="flex:0 0 110px">
-        <label for="rd-status">Status</label>
-        <select id="rd-status" class="select" bind:value={cfg.status}>
+      <label data-field style="flex:0 0 110px">
+        Status
+        <select bind:value={cfg.status}>
           <option value={301}>301</option>
           <option value={302}>302</option>
           <option value={307}>307</option>
           <option value={308}>308</option>
         </select>
-      </div>
-      <div class="field">
-        <label for="rd-loc">Location</label>
-        <input id="rd-loc" class="input mono" bind:value={cfg.location} placeholder="https://new.example.com" />
-      </div>
+      </label>
+      <label data-field>
+        Location
+        <input class="mono" bind:value={cfg.location} placeholder="https://new.example.com" />
+      </label>
     </div>
-    <button class="opt" onclick={() => (cfg.preserve_path = !cfg.preserve_path)}>
-      <span class="toggle {cfg.preserve_path ? 'on' : ''}"></span> Append the incoming path and query
-    </button>
+    <label class="opt">
+      <input type="checkbox" role="switch" checked={cfg.preserve_path} onchange={() => (cfg.preserve_path = !cfg.preserve_path)} />
+      Append the incoming path and query
+    </label>
   {:else if form.type === 'http-log'}
-    <div class="field">
-      <label for="hl-endpoint">Collector endpoint</label>
-      <input id="hl-endpoint" class="input mono" bind:value={cfg.endpoint} placeholder="https://logs.example.com/ingest" />
-      <span class="hint">Request records are POSTed there as JSON arrays, off the request path.</span>
-    </div>
+    <label data-field>
+      Collector endpoint
+      <input class="mono" bind:value={cfg.endpoint} placeholder="https://logs.example.com/ingest" />
+      <span data-hint>Request records are POSTed there as JSON arrays, off the request path.</span>
+    </label>
     <div class="row">
-      <div class="field">
-        <label for="hl-batch">Batch size</label>
-        <input id="hl-batch" class="input" type="number" min="1" bind:value={cfg.batch_max} />
-      </div>
-      <div class="field">
-        <label for="hl-flush">Flush interval <span class="faint">(ms)</span></label>
-        <input id="hl-flush" class="input" type="number" min="500" bind:value={cfg.flush_interval_ms} />
-      </div>
+      <label data-field>
+        Batch size
+        <input type="number" min="1" bind:value={cfg.batch_max} />
+      </label>
+      <label data-field>
+        Flush interval <span class="faint">(ms)</span>
+        <input type="number" min="500" bind:value={cfg.flush_interval_ms} />
+      </label>
     </div>
   {:else if form.type === 'request-id'}
-    <div class="field">
-      <label for="ri-header">Header name</label>
-      <input id="ri-header" class="input mono" bind:value={cfg.header_name} placeholder="X-Request-Id" />
-      <span class="hint">Set on the upstream request (and the response, if echoed below).</span>
-    </div>
-    <button class="opt" onclick={() => (cfg.preserve = !cfg.preserve)}>
-      <span class="toggle {cfg.preserve ? 'on' : ''}"></span> Keep an id the client already sent
-    </button>
-    <button class="opt" onclick={() => (cfg.echo_downstream = !cfg.echo_downstream)}>
-      <span class="toggle {cfg.echo_downstream ? 'on' : ''}"></span> Echo the id on the response
-    </button>
+    <label data-field>
+      Header name
+      <input class="mono" bind:value={cfg.header_name} placeholder="X-Request-Id" />
+      <span data-hint>Set on the upstream request (and the response, if echoed below).</span>
+    </label>
+    <label class="opt">
+      <input type="checkbox" role="switch" checked={cfg.preserve} onchange={() => (cfg.preserve = !cfg.preserve)} />
+      Keep an id the client already sent
+    </label>
+    <label class="opt">
+      <input type="checkbox" role="switch" checked={cfg.echo_downstream} onchange={() => (cfg.echo_downstream = !cfg.echo_downstream)} />
+      Echo the id on the response
+    </label>
   {:else if form.type === 'response-compression'}
-    <div class="field">
-      <label for="rc-level">Compression level</label>
-      <input id="rc-level" class="input" type="number" min="1" max="9" bind:value={cfg.level} />
-      <span class="hint">
+    <label data-field>
+      Compression level
+      <input type="number" min="1" max="9" bind:value={cfg.level} />
+      <span data-hint>
         1 (fastest) to 9 (smallest), applied to whichever algorithm the client accepts — gzip, brotli, or zstd.
       </span>
-    </div>
+    </label>
   {:else if form.type === 'wasm'}
     {#if modules.length === 0}
-      <div class="note">No WASM modules uploaded yet — add one from the "WASM modules" panel first.</div>
+      <div role="alert">No WASM modules uploaded yet — add one from the "WASM modules" panel first.</div>
     {:else}
       <div class="row">
-        <div class="field">
-          <label for="w-module">Module</label>
-          <select id="w-module" class="select" bind:value={cfg.module}>
+        <label data-field>
+          Module
+          <select bind:value={cfg.module}>
             {#each modules as m}<option value={m.name}>{m.name}</option>{/each}
           </select>
-        </div>
-        <div class="field">
-          <label for="w-fuel">Fuel limit <span class="faint">(instructions/call)</span></label>
-          <input id="w-fuel" class="input" type="number" min="1000" bind:value={cfg.fuel} />
-        </div>
+        </label>
+        <label data-field>
+          Fuel limit <span class="faint">(instructions/call)</span>
+          <input type="number" min="1000" bind:value={cfg.fuel} />
+        </label>
       </div>
-      <div class="field">
-        <label for="w-config">Module config <span class="faint">(JSON, passed on every call)</span></label>
-        <textarea id="w-config" class="textarea" rows="5" bind:value={cfg.config_json}></textarea>
-      </div>
+      <label data-field>
+        Module config <span class="faint">(JSON, passed on every call)</span>
+        <textarea rows="5" bind:value={cfg.config_json}></textarea>
+      </label>
     {/if}
   {:else if form.type === 'rate-limit'}
     <div class="row">
-      <div class="field">
-        <label for="rl-limit">Limit <span class="faint">(requests)</span></label>
-        <input id="rl-limit" class="input" type="number" min="1" bind:value={cfg.limit} />
-      </div>
-      <div class="field">
-        <label for="rl-window">Window <span class="faint">(seconds)</span></label>
-        <input id="rl-window" class="input" type="number" min="1" bind:value={cfg.window_secs} />
-      </div>
+      <label data-field>
+        Limit <span class="faint">(requests)</span>
+        <input type="number" min="1" bind:value={cfg.limit} />
+      </label>
+      <label data-field>
+        Window <span class="faint">(seconds)</span>
+        <input type="number" min="1" bind:value={cfg.window_secs} />
+      </label>
     </div>
-    <div class="field">
-      <label for="rl-key">Count per</label>
-      <select id="rl-key" class="select" bind:value={cfg.key}>
+    <label data-field>
+      Count per
+      <select bind:value={cfg.key}>
         <option value="ip">Client IP</option>
         <option value="consumer">Authenticated consumer</option>
         <option value="route">Route (shared bucket)</option>
       </select>
-    </div>
-    <button class="opt" onclick={() => (cfg.headers = cfg.headers === false)}>
-      <span class="toggle {cfg.headers !== false ? 'on' : ''}"></span> Send RateLimit-* response headers
-    </button>
+    </label>
+    <label class="opt">
+      <input type="checkbox" role="switch" checked={cfg.headers !== false} onchange={() => (cfg.headers = cfg.headers === false)} />
+      Send RateLimit-* response headers
+    </label>
   {:else if form.type === 'proxy-cache'}
     <div class="row">
-      <div class="field">
-        <label for="pc-ttl">TTL <span class="faint">(seconds)</span></label>
-        <input id="pc-ttl" class="input" type="number" min="1" bind:value={cfg.ttl_secs} />
-      </div>
-      <div class="field">
-        <label for="pc-max">Max body size <span class="faint">(bytes)</span></label>
-        <input id="pc-max" class="input" type="number" min="1" bind:value={cfg.max_body_bytes} />
-        <span class="hint">Larger responses are proxied but not cached.</span>
-      </div>
+      <label data-field>
+        TTL <span class="faint">(seconds)</span>
+        <input type="number" min="1" bind:value={cfg.ttl_secs} />
+      </label>
+      <label data-field>
+        Max body size <span class="faint">(bytes)</span>
+        <input type="number" min="1" bind:value={cfg.max_body_bytes} />
+        <span data-hint>Larger responses are proxied but not cached.</span>
+      </label>
     </div>
-    <div class="field">
-      <label for="pc-methods">Cacheable methods <span class="faint">(comma-separated)</span></label>
-      <input id="pc-methods" class="input mono" value={cfg.methods_csv ?? list(cfg.methods)}
+    <label data-field>
+      Cacheable methods <span class="faint">(comma-separated)</span>
+      <input class="mono" value={cfg.methods_csv ?? list(cfg.methods)}
         oninput={(e) => (cfg.methods_csv = (e.currentTarget as HTMLInputElement).value)} placeholder="GET" />
-    </div>
-    <button class="opt" onclick={() => (cfg.cache_key_query = cfg.cache_key_query === false)}>
-      <span class="toggle {cfg.cache_key_query !== false ? 'on' : ''}"></span> Include the query string in the cache key
-    </button>
+    </label>
+    <label class="opt">
+      <input type="checkbox" role="switch" checked={cfg.cache_key_query !== false} onchange={() => (cfg.cache_key_query = cfg.cache_key_query === false)} />
+      Include the query string in the cache key
+    </label>
   {:else if form.type === 'response-body-transform'}
-    <div class="field">
+    <div data-field>
       <label for="bt-rep-0f">Replacements</label>
       {#each replaceRows as row, i}
         <div class="hdr-row">
-          <input id={'bt-rep-' + i + 'f'} class="input mono" placeholder="find" bind:value={row.from} />
-          <input class="input mono" placeholder="replace with" bind:value={row.to} aria-label="Replacement value" />
-          <button class="btn btn-sm btn-ghost" aria-label="Remove replacement" onclick={() => (replaceRows = replaceRows.filter((_, j) => j !== i))}>✕</button>
+          <input id={'bt-rep-' + i + 'f'} class="mono" placeholder="find" bind:value={row.from} />
+          <input class="mono" placeholder="replace with" bind:value={row.to} aria-label="Replacement value" />
+          <button class="ghost small icon" aria-label="Remove replacement" onclick={() => (replaceRows = replaceRows.filter((_, j) => j !== i))}>✕</button>
         </div>
       {/each}
-      <button class="btn btn-sm" style="align-self:flex-start" onclick={() => replaceRows.push({ from: '', to: '' })}>+ Add replacement</button>
+      <button class="outline small" onclick={() => replaceRows.push({ from: '', to: '' })}>+ Add replacement</button>
     </div>
     <div class="row">
-      <div class="field">
-        <label for="bt-max">Max body size <span class="faint">(bytes)</span></label>
-        <input id="bt-max" class="input" type="number" min="1" bind:value={cfg.max_body_bytes} />
-        <span class="hint">Larger responses pass through untransformed.</span>
-      </div>
-      <div class="field">
-        <label for="bt-ct">Content-type prefixes <span class="faint">(comma-separated)</span></label>
-        <input id="bt-ct" class="input mono" value={cfg.content_types_csv ?? list(cfg.content_types)}
+      <label data-field>
+        Max body size <span class="faint">(bytes)</span>
+        <input type="number" min="1" bind:value={cfg.max_body_bytes} />
+        <span data-hint>Larger responses pass through untransformed.</span>
+      </label>
+      <label data-field>
+        Content-type prefixes <span class="faint">(comma-separated)</span>
+        <input class="mono" value={cfg.content_types_csv ?? list(cfg.content_types)}
           oninput={(e) => (cfg.content_types_csv = (e.currentTarget as HTMLInputElement).value)} placeholder="text/, application/json" />
-      </div>
+      </label>
     </div>
   {:else if form.type === 'cors'}
-    <div class="field">
-      <label for="c-origins">Allowed origins <span class="faint">(comma-separated, * = any)</span></label>
-      <input id="c-origins" class="input mono" value={cfg.allow_origins_csv ?? list(cfg.allow_origins)}
+    <label data-field>
+      Allowed origins <span class="faint">(comma-separated, * = any)</span>
+      <input class="mono" value={cfg.allow_origins_csv ?? list(cfg.allow_origins)}
         oninput={(e) => (cfg.allow_origins_csv = (e.currentTarget as HTMLInputElement).value)} placeholder="https://app.example.com" />
-    </div>
-    <div class="field">
-      <label for="c-methods">Allowed methods</label>
-      <input id="c-methods" class="input mono" value={cfg.allow_methods_csv ?? list(cfg.allow_methods)}
+    </label>
+    <label data-field>
+      Allowed methods
+      <input class="mono" value={cfg.allow_methods_csv ?? list(cfg.allow_methods)}
         oninput={(e) => (cfg.allow_methods_csv = (e.currentTarget as HTMLInputElement).value)} placeholder="GET, POST" />
-    </div>
-    <div class="field">
-      <label for="c-headers">Allowed headers</label>
-      <input id="c-headers" class="input mono" value={cfg.allow_headers_csv ?? list(cfg.allow_headers)}
+    </label>
+    <label data-field>
+      Allowed headers
+      <input class="mono" value={cfg.allow_headers_csv ?? list(cfg.allow_headers)}
         oninput={(e) => (cfg.allow_headers_csv = (e.currentTarget as HTMLInputElement).value)} placeholder="*" />
-    </div>
+    </label>
     <div class="row">
-      <div class="field">
-        <label for="c-age">Preflight max age <span class="faint">(seconds)</span></label>
-        <input id="c-age" class="input" type="number" min="0" bind:value={cfg.max_age} />
-      </div>
+      <label data-field>
+        Preflight max age <span class="faint">(seconds)</span>
+        <input type="number" min="0" bind:value={cfg.max_age} />
+      </label>
     </div>
-    <button class="opt" onclick={() => (cfg.allow_credentials = !cfg.allow_credentials)}>
-      <span class="toggle {cfg.allow_credentials ? 'on' : ''}"></span> Allow credentials (cookies, auth headers)
-    </button>
+    <label class="opt">
+      <input type="checkbox" role="switch" checked={cfg.allow_credentials} onchange={() => (cfg.allow_credentials = !cfg.allow_credentials)} />
+      Allow credentials (cookies, auth headers)
+    </label>
   {:else}
     <!-- request/response transform -->
-    <div class="field">
+    <div data-field>
       <label for="tf-add-0k">{form.type === 'request-transform' ? 'Add request headers' : 'Add response headers'}</label>
       {#each addRows as row, i}
         <div class="hdr-row">
-          <input id={'tf-add-' + i + 'k'} class="input mono" placeholder="Header-Name" bind:value={row.k} />
-          <input class="input mono" placeholder="value" bind:value={row.v} aria-label="Header value" />
-          <button class="btn btn-sm btn-ghost" aria-label="Remove header" onclick={() => (addRows = addRows.filter((_, j) => j !== i))}>✕</button>
+          <input id={'tf-add-' + i + 'k'} class="mono" placeholder="Header-Name" bind:value={row.k} />
+          <input class="mono" placeholder="value" bind:value={row.v} aria-label="Header value" />
+          <button class="ghost small icon" aria-label="Remove header" onclick={() => (addRows = addRows.filter((_, j) => j !== i))}>✕</button>
         </div>
       {/each}
-      <button class="btn btn-sm" style="align-self:flex-start" onclick={() => addRows.push({ k: '', v: '' })}>+ Add header</button>
+      <button class="outline small" onclick={() => addRows.push({ k: '', v: '' })}>+ Add header</button>
     </div>
-    <div class="field">
-      <label for="tf-remove">Remove headers <span class="faint">(comma-separated)</span></label>
-      <input id="tf-remove" class="input mono" value={cfg.remove_csv ?? list(cfg.remove)}
+    <label data-field>
+      Remove headers <span class="faint">(comma-separated)</span>
+      <input class="mono" value={cfg.remove_csv ?? list(cfg.remove)}
         oninput={(e) => (cfg.remove_csv = (e.currentTarget as HTMLInputElement).value)} placeholder="server, x-powered-by" />
-    </div>
+    </label>
   {/if}
 
   {#if form.scope !== 'global'}
     <div class="row">
-      <div class="field">
-        <label for="p-order2">Ordering</label>
-        <input id="p-order2" class="input" type="number" bind:value={form.ordering} />
-        <span class="hint">Lower runs earlier among plugins of the same type priority.</span>
-      </div>
+      <label data-field>
+        Ordering
+        <input type="number" bind:value={form.ordering} />
+        <span data-hint>Lower runs earlier among plugins of the same type priority.</span>
+      </label>
     </div>
   {/if}
-  <button class="opt" onclick={() => (form.enabled = !form.enabled)}>
-    <span class="toggle {form.enabled ? 'on' : ''}"></span> Enabled
-  </button>
+  <label class="opt">
+    <input type="checkbox" role="switch" checked={form.enabled} onchange={() => (form.enabled = !form.enabled)} />
+    Enabled
+  </label>
 
   {#snippet footer()}
-    <button class="btn btn-ghost" onclick={() => (open = false)}>Cancel</button>
-    <button class="btn btn-primary" onclick={save}>{editing ? 'Save' : 'Create'}</button>
+    <button class="ghost" onclick={() => (open = false)}>Cancel</button>
+    <button onclick={save}>{editing ? 'Save' : 'Create'}</button>
   {/snippet}
 </Drawer>
 
-<div class="panel" style="margin-top:16px">
+<div class="card" style="margin-top:16px">
   <div class="panel-head">
     <h2>WASM modules</h2>
-    <button class="btn btn-sm" onclick={() => { modForm = { name: '', description: '', wat: '', wasm_base64: '', fileName: '' }; modOpen = true; }}>
+    <button class="outline small" onclick={() => { modForm = { name: '', description: '', wat: '', wasm_base64: '', fileName: '' }; modOpen = true; }}>
       + Upload module
     </button>
   </div>
   {#if modules.length === 0}
     <div class="empty">
-      No modules yet. Upload a <span class="code">.wasm</span> binary or WAT source implementing
-      <span class="code">raahi_alloc</span> and <span class="code">on_request</span> / <span class="code">on_response</span>.
+      No modules yet. Upload a <code>.wasm</code> binary or WAT source implementing
+      <code>raahi_alloc</code> and <code>on_request</code> / <code>on_response</code>.
     </div>
   {:else}
-    <div class="table-wrap">
-      <table class="table">
+    <div class="table">
+      <table>
         <thead><tr><th>Name</th><th>Description</th><th>Size</th><th></th></tr></thead>
         <tbody>
           {#each modules as m (m.id)}
@@ -862,7 +872,7 @@
               <td class="muted">{m.description || '—'}</td>
               <td class="mono faint">{fmtSize(m.size_bytes)}</td>
               <td class="actions">
-                <button class="btn btn-sm btn-danger" onclick={() => delModule(m)}>Delete</button>
+                <button class="ghost small" data-variant="danger" onclick={() => delModule(m)}>Delete</button>
               </td>
             </tr>
           {/each}
@@ -873,32 +883,32 @@
 </div>
 
 <Drawer bind:open={modOpen} title="Upload WASM module">
-  <div class="field">
-    <label for="m-name">Name</label>
-    <input id="m-name" class="input mono" bind:value={modForm.name} placeholder="my-filter" />
-  </div>
-  <div class="field">
-    <label for="m-desc">Description <span class="faint">(optional)</span></label>
-    <input id="m-desc" class="input" bind:value={modForm.description} />
-  </div>
-  <div class="field">
-    <label for="m-file">.wasm binary</label>
-    <input id="m-file" class="input" type="file" accept=".wasm" onchange={onModuleFile} />
-    {#if modForm.fileName}<span class="hint">Loaded {modForm.fileName}</span>{/if}
-  </div>
-  <div class="field">
-    <label for="m-wat">…or WAT source text</label>
-    <textarea id="m-wat" class="textarea" rows="9" bind:value={modForm.wat} placeholder={'(module\n  (memory (export "memory") 1)\n  …)'}></textarea>
-    <span class="hint">
-      ABI: export <span class="code">memory</span>, <span class="code">raahi_alloc(size)→ptr</span>, and
-      <span class="code">on_request(ptr,len)→i64</span> / <span class="code">on_response(ptr,len)→i64</span>
-      exchanging JSON; the return packs <span class="code">(out_ptr &lt;&lt; 32) | out_len</span>.
+  <label data-field>
+    Name
+    <input class="mono" bind:value={modForm.name} placeholder="my-filter" />
+  </label>
+  <label data-field>
+    Description <span class="faint">(optional)</span>
+    <input bind:value={modForm.description} />
+  </label>
+  <label data-field>
+    .wasm binary
+    <input type="file" accept=".wasm" onchange={onModuleFile} />
+    {#if modForm.fileName}<span data-hint>Loaded {modForm.fileName}</span>{/if}
+  </label>
+  <label data-field>
+    …or WAT source text
+    <textarea rows="9" bind:value={modForm.wat} placeholder={'(module\n  (memory (export "memory") 1)\n  …)'}></textarea>
+    <span data-hint>
+      ABI: export <code>memory</code>, <code>raahi_alloc(size)→ptr</code>, and
+      <code>on_request(ptr,len)→i64</code> / <code>on_response(ptr,len)→i64</code>
+      exchanging JSON; the return packs <code>(out_ptr &lt;&lt; 32) | out_len</code>.
     </span>
-  </div>
+  </label>
 
   {#snippet footer()}
-    <button class="btn btn-ghost" onclick={() => (modOpen = false)}>Cancel</button>
-    <button class="btn btn-primary" onclick={uploadModule} disabled={!modForm.name || (!modForm.wat && !modForm.wasm_base64)}>
+    <button class="ghost" onclick={() => (modOpen = false)}>Cancel</button>
+    <button onclick={uploadModule} disabled={!modForm.name || (!modForm.wat && !modForm.wasm_base64)}>
       Upload
     </button>
   {/snippet}
@@ -907,7 +917,7 @@
 <style>
   .cfg-sum {
     font-size: 12px;
-    color: var(--muted);
+    color: var(--muted-foreground);
     max-width: 260px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -930,5 +940,14 @@
     grid-template-columns: 1fr 1fr auto;
     gap: 8px;
     margin-bottom: 8px;
+    align-items: center;
+  }
+  .hdr-row input {
+    margin-block-start: 0;
+  }
+  /* Oat renders switch labels inline-flex; these are one-per-line option rows. */
+  .opt {
+    display: flex;
+    margin-block-end: 14px;
   }
 </style>

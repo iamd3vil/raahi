@@ -91,18 +91,18 @@
 
 <div class="head-actions">
   <p class="muted">Raw TCP (L4) listeners spliced to a service's targets — databases, message queues, anything over TCP.</p>
-  <button class="btn btn-primary" onclick={openNew}>+ New stream route</button>
+  <button onclick={openNew}>+ New stream route</button>
 </div>
 
-<div class="note">
+<div role="alert">
   <strong>Note:</strong> Stream listeners bind at startup — <strong>adding or removing</strong> a stream
   route (or changing its listen address) takes effect after a proxy restart. <strong>Retargeting</strong> an
   existing route to another service, and enable/disable, apply live.
 </div>
 
-<div class="panel">
+<div class="card">
   {#if loading}
-    <div class="empty"><span class="spinner"></span></div>
+    <div class="empty"><span aria-busy="true" data-spinner="small"></span></div>
   {:else if routes.length === 0}
     <EmptyState
       icon="M8 3v18m8-18v18M3 8h18M3 16h18"
@@ -110,12 +110,12 @@
       description="A stream route binds a local TCP port and proxies every connection to a service's targets, byte for byte."
     >
       {#snippet action()}
-        <button class="btn btn-primary" onclick={openNew}>+ Create your first stream route</button>
+        <button onclick={openNew}>+ Create your first stream route</button>
       {/snippet}
     </EmptyState>
   {:else}
-    <div class="table-wrap">
-      <table class="table">
+    <div class="table">
+      <table>
         <thead><tr><th>Name</th><th>Listen address</th><th>Service</th><th>Enabled</th><th></th></tr></thead>
         <tbody>
           {#each routes as r (r.id)}
@@ -125,10 +125,10 @@
               <td>
                 <button class="link" onclick={() => go('services')}>{svcName(r.service_id)}</button>
               </td>
-              <td><button class="toggle {r.enabled ? 'on' : ''}" aria-label="Toggle enabled" onclick={() => toggleEnabled(r)}></button></td>
+              <td><input type="checkbox" role="switch" checked={r.enabled} aria-label="Toggle enabled" onchange={() => toggleEnabled(r)} /></td>
               <td class="actions">
-                <button class="btn btn-sm btn-ghost" onclick={() => openEdit(r)}>Edit</button>
-                <button class="btn btn-sm btn-danger" onclick={() => del(r)}>Delete</button>
+                <button class="ghost small" onclick={() => openEdit(r)}>Edit</button>
+                <button class="ghost small" data-variant="danger" onclick={() => del(r)}>Delete</button>
               </td>
             </tr>
           {/each}
@@ -139,52 +139,52 @@
 </div>
 
 <Drawer bind:open title={editing ? `Edit ${editing.name}` : 'New stream route'}>
-  <div class="field">
-    <label for="sr-name">Name</label>
-    <input id="sr-name" class="input" bind:value={form.name} placeholder="postgres" />
-  </div>
-  <div class="field">
-    <label for="sr-addr">Listen address</label>
-    <input id="sr-addr" class="input mono" bind:value={form.listen_addr} placeholder="0.0.0.0:5432" />
-    <span class="hint">Binding a new address requires a proxy restart.</span>
-  </div>
-  <div class="field">
-    <label for="sr-svc">Service</label>
-    <select id="sr-svc" class="select" bind:value={form.service_id}>
+  <label data-field>
+    Name
+    <input bind:value={form.name} placeholder="postgres" />
+  </label>
+  <label data-field>
+    Listen address
+    <input class="mono" bind:value={form.listen_addr} placeholder="0.0.0.0:5432" />
+    <span data-hint>Binding a new address requires a proxy restart.</span>
+  </label>
+  <label data-field>
+    Service
+    <select bind:value={form.service_id}>
       {#each services as s}<option value={s.id}>{s.name}</option>{/each}
     </select>
-    <span class="hint">Retargeting applies live — no restart.</span>
-  </div>
+    <span data-hint>Retargeting applies live — no restart.</span>
+  </label>
   <div class="toggles">
-    <button class="opt" onclick={() => (form.enabled = !form.enabled)}>
-      <span class="toggle {form.enabled ? 'on' : ''}"></span> Enabled
-    </button>
+    <label>
+      <input type="checkbox" role="switch" checked={form.enabled} onchange={() => (form.enabled = !form.enabled)} />
+      Enabled
+    </label>
   </div>
 
   {#snippet footer()}
-    <button class="btn btn-ghost" onclick={() => (open = false)}>Cancel</button>
-    <button class="btn btn-primary" onclick={save}>{editing ? 'Save' : 'Create'}</button>
+    <button class="ghost" onclick={() => (open = false)}>Cancel</button>
+    <button onclick={save}>{editing ? 'Save' : 'Create'}</button>
   {/snippet}
 </Drawer>
 
 <style>
-  .head-actions {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 16px;
-    gap: 12px;
-  }
-  .actions {
-    text-align: right;
-  }
+  /* Inline text-link button; fully overrides Oat's default button styling. */
   .link {
+    display: inline;
     background: none;
     border: none;
-    color: var(--accent-text);
+    color: var(--primary);
     cursor: pointer;
     font: inherit;
     padding: 0;
+  }
+  .link:hover {
+    background: none;
+    text-decoration: underline;
+  }
+  .link:active {
+    transform: none;
   }
   .toggles {
     display: flex;

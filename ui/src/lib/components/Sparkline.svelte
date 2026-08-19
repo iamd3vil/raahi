@@ -3,7 +3,7 @@
     data,
     width = 120,
     height = 32,
-    stroke = 'var(--accent)',
+    stroke = 'var(--primary)',
   }: { data: number[]; width?: number; height?: number; stroke?: string } = $props();
 
   const points = $derived.by(() => {
