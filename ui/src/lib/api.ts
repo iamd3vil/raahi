@@ -121,9 +121,26 @@ export const api = {
 
   // certificates
   listCertificates: () => req<Certificate[]>('GET', '/certificates'),
-  createCertificate: (c: { name: string; sni: string[]; cert_pem: string; key_pem: string }) =>
+  createCertificate: (c: {
+    name: string;
+    sni: string[];
+    cert_pem?: string;
+    key_pem?: string;
+    acme_config?: {
+      directory_url: string;
+      challenge: 'dns-01' | 'tls-alpn-01';
+      email?: string;
+    };
+  }) =>
     req<Certificate>('POST', '/certificates', c),
   deleteCertificate: (id: number) => req('DELETE', `/certificates/${id}`),
+  renewCertificate: (id: number) => req('POST', `/certificates/${id}/renew`),
+  getCloudflareTokenStatus: () =>
+    req<{ configured: boolean }>('GET', '/acme/cloudflare-token'),
+  setCloudflareToken: (token: string) =>
+    req<{ configured: boolean }>('PUT', '/acme/cloudflare-token', { token }),
+  deleteCloudflareToken: () =>
+    req<{ configured: boolean }>('DELETE', '/acme/cloudflare-token'),
 
   // settings + observability
   getSettings: () => req<Settings>('GET', '/settings'),

@@ -158,6 +158,7 @@ mod tests {
             path: "/",
             query: None,
             host: "h",
+            is_tls: false,
             client_ip: Some("1.2.3.4"),
             headers,
             route_id: 1,

@@ -160,8 +160,12 @@ pub struct CertificateSpec {
     pub name: String,
     #[serde(default)]
     pub sni: Vec<String>,
+    #[serde(default)]
     pub cert_pem: String,
+    #[serde(default)]
     pub key_pem: String,
+    #[serde(default)]
+    pub acme_config: Option<AcmeConfig>,
 }
 
 /// The import document — the same shape `GET /export` produces. Entity ids inside
@@ -187,6 +191,24 @@ pub struct ImportDoc {
     /// Raw values: `{name, description, wasm_base64}`.
     #[serde(default)]
     pub wasm_modules: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub acme: Option<ImportAcmeState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportAcmeState {
+    #[serde(default)]
+    pub cloudflare_api_token: Option<String>,
+    #[serde(default)]
+    pub accounts: Vec<ImportAcmeAccount>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportAcmeAccount {
+    pub directory_url: String,
+    #[serde(default)]
+    pub email: Option<String>,
+    pub credentials: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

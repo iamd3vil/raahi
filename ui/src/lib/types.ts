@@ -17,6 +17,7 @@ export type PluginType =
   | 'wasm'
   | 'request-transform'
   | 'response-transform'
+  | 'hsts'
   | 'response-body-transform'
   | 'http-log'
   | 'request-id'
@@ -100,6 +101,18 @@ export interface Certificate {
   name: string;
   sni: string[];
   cert_pem: string;
+  acme_config?: {
+    directory_url: string;
+    challenge: 'dns-01' | 'tls-alpn-01';
+    email?: string;
+  };
+  acme_status?: {
+    state: 'pending' | 'issuing' | 'issued' | 'failed';
+    issued_at?: string;
+    expires_at?: string;
+    last_attempt?: string;
+    last_error?: string;
+  };
 }
 
 export interface Settings {
@@ -203,6 +216,7 @@ export const PLUGIN_TYPES: PluginType[] = [
   'wasm',
   'request-transform',
   'response-transform',
+  'hsts',
   'response-body-transform',
   'http-log',
   'request-id',
@@ -224,6 +238,7 @@ export const PLUGIN_LABELS: Record<PluginType, string> = {
   wasm: 'WASM',
   'request-transform': 'Request Transform',
   'response-transform': 'Response Transform',
+  hsts: 'HSTS',
   'response-body-transform': 'Body Transform',
   'http-log': 'HTTP Log',
   'request-id': 'Request ID',

@@ -126,6 +126,7 @@ impl Store {
             "targets",
             "services",
             "certificates",
+            "acme_accounts",
             "wasm_modules",
         ] {
             sqlx::query(&format!("DELETE FROM {table}"))
@@ -288,19 +289,27 @@ impl Store {
         for cv in &doc.certificates {
             let name = cv["name"].as_str().unwrap_or("");
             let key_pem = cv["key_pem"].as_str().unwrap_or("");
-            if key_pem.is_empty() {
+            let acme_config = cv.get("acme_config").filter(|value| !value.is_null());
+            if key_pem.is_empty() && acme_config.is_none() {
                 report.skipped.push(format!(
                     "certificate '{name}': key_pem not in export (re-export with include_secrets=true)"
                 ));
                 continue;
             }
             let res = sqlx::query(
-                "INSERT INTO certificates (name, sni, cert_pem, key_pem) VALUES (?,?,?,?)",
+                "INSERT INTO certificates \
+                 (name, sni, cert_pem, key_pem, acme_config, acme_status) VALUES (?,?,?,?,?,?)",
             )
             .bind(name)
             .bind(cv["sni"].to_string())
             .bind(cv["cert_pem"].as_str().unwrap_or(""))
             .bind(key_pem)
+            .bind(acme_config.map(|value| value.to_string()))
+            .bind(
+                cv.get("acme_status")
+                    .filter(|value| !value.is_null())
+                    .map(|value| value.to_string()),
+            )
             .execute(&mut *tx)
             .await?;
             if let Some(old) = cv["id"].as_i64() {
@@ -397,6 +406,24 @@ impl Store {
             .bind(active_cert)
             .execute(&mut *tx)
             .await?;
+        }
+
+        if let Some(acme) = &doc.acme {
+            sqlx::query("UPDATE settings SET cloudflare_api_token=? WHERE id=1")
+                .bind(&acme.cloudflare_api_token)
+                .execute(&mut *tx)
+                .await?;
+            for account in &acme.accounts {
+                sqlx::query(
+                    "INSERT INTO acme_accounts \
+                     (directory_url, email, credentials) VALUES (?,?,?)",
+                )
+                .bind(&account.directory_url)
+                .bind(&account.email)
+                .bind(&account.credentials)
+                .execute(&mut *tx)
+                .await?;
+            }
         }
 
         tx.commit().await?;

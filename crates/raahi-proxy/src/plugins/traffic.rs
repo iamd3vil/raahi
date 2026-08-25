@@ -92,6 +92,8 @@ pub struct RedirectCfg {
     pub location: String,
     /// Append the incoming path + query to `location`.
     pub preserve_path: bool,
+    /// Redirect plain HTTP requests but continue proxying HTTPS requests.
+    pub http_only: bool,
 }
 
 impl Default for RedirectCfg {
@@ -100,12 +102,13 @@ impl Default for RedirectCfg {
             status: 302,
             location: String::new(),
             preserve_path: true,
+            http_only: false,
         }
     }
 }
 
 pub fn redirect(c: &RedirectCfg, input: &ReqInput) -> Action {
-    if c.location.is_empty() {
+    if c.location.is_empty() || (c.http_only && input.is_tls) {
         return Action::Continue; // misconfigured; do not black-hole traffic
     }
     let mut location = c.location.trim_end_matches('/').to_string();
@@ -128,4 +131,46 @@ pub fn redirect(c: &RedirectCfg, input: &ReqInput) -> Action {
         ],
         body: b"Redirecting\n".to_vec(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http::HeaderMap;
+
+    fn input(headers: &HeaderMap, is_tls: bool) -> ReqInput<'_> {
+        ReqInput {
+            method: "GET",
+            path: "/docs",
+            query: Some("page=1"),
+            host: "example.com",
+            is_tls,
+            client_ip: None,
+            headers,
+            route_id: 1,
+        }
+    }
+
+    #[test]
+    fn http_only_redirect_skips_tls_requests() {
+        let cfg = RedirectCfg {
+            status: 308,
+            location: "https://example.com".into(),
+            preserve_path: true,
+            http_only: true,
+        };
+        let headers = HeaderMap::new();
+
+        assert!(matches!(
+            redirect(&cfg, &input(&headers, true)),
+            Action::Continue
+        ));
+        match redirect(&cfg, &input(&headers, false)) {
+            Action::Respond(response) => {
+                assert_eq!(response.status, 308);
+                assert_eq!(response.headers[0].1, "https://example.com/docs?page=1");
+            }
+            Action::Continue => panic!("HTTP request should redirect"),
+        }
+    }
 }

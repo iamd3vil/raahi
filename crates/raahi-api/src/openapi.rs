@@ -60,7 +60,7 @@ mod tests {
             }
         }
         assert_eq!(
-            operations, 53,
+            operations, 57,
             "contract must cover every registered operation"
         );
     }

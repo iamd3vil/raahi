@@ -9,6 +9,7 @@ mod bodytransform;
 mod cache;
 mod compression;
 mod cors;
+mod hsts;
 mod ratelimit;
 mod requestid;
 mod traffic;
@@ -32,6 +33,7 @@ pub struct ReqInput<'a> {
     pub path: &'a str,
     pub query: Option<&'a str>,
     pub host: &'a str,
+    pub is_tls: bool,
     pub client_ip: Option<&'a str>,
     pub headers: &'a http::HeaderMap,
     pub route_id: Id,
@@ -127,6 +129,7 @@ enum PluginInstance {
     Wasm(wasm::WasmPlugin),
     RequestTransform(transform::TransformCfg),
     ResponseTransform(transform::TransformCfg),
+    Hsts(hsts::HstsCfg),
     ResponseBodyTransform(bodytransform::BodyTransformCfg),
     HttpLog(HttpLogCfg),
     RequestId(requestid::RequestIdCfg),
@@ -209,6 +212,9 @@ impl PluginSet {
                 PluginType::ResponseTransform => PluginInstance::ResponseTransform(
                     serde_json::from_value(cfg()).unwrap_or_default(),
                 ),
+                PluginType::Hsts => {
+                    PluginInstance::Hsts(serde_json::from_value(cfg()).unwrap_or_default())
+                }
                 PluginType::ResponseBodyTransform => PluginInstance::ResponseBodyTransform(
                     serde_json::from_value(cfg()).unwrap_or_default(),
                 ),
@@ -260,6 +266,7 @@ impl PluginSet {
                 c.apply_response(effects);
                 Action::Continue
             }
+            PluginInstance::Hsts(c) => hsts::hsts(c, input, effects),
             PluginInstance::ResponseBodyTransform(c) => {
                 effects.body_transform = Some(c.clone());
                 Action::Continue
@@ -319,8 +326,11 @@ pub fn type_priority(t: PluginType) -> u8 {
         PluginType::Redirect => 11,
         PluginType::RequestTransform => 12,
         PluginType::ResponseTransform => 13,
-        PluginType::ResponseBodyTransform => 14,
-        PluginType::HttpLog => 15,
+        // HSTS runs after generic response transforms so insert_header replaces any
+        // upstream or transform-provided policy with the typed plugin's policy.
+        PluginType::Hsts => 14,
+        PluginType::ResponseBodyTransform => 15,
+        PluginType::HttpLog => 16,
     }
 }
 

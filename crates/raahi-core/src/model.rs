@@ -176,6 +176,7 @@ pub enum PluginType {
     Wasm,
     RequestTransform,
     ResponseTransform,
+    Hsts,
     ResponseBodyTransform,
     HttpLog,
     RequestId,
@@ -199,6 +200,7 @@ impl PluginType {
             PluginType::Wasm => "wasm",
             PluginType::RequestTransform => "request-transform",
             PluginType::ResponseTransform => "response-transform",
+            PluginType::Hsts => "hsts",
             PluginType::ResponseBodyTransform => "response-body-transform",
             PluginType::HttpLog => "http-log",
             PluginType::RequestId => "request-id",
@@ -221,6 +223,7 @@ impl PluginType {
             "wasm" => PluginType::Wasm,
             "request-transform" => PluginType::RequestTransform,
             "response-transform" => PluginType::ResponseTransform,
+            "hsts" => PluginType::Hsts,
             "response-body-transform" => PluginType::ResponseBodyTransform,
             "http-log" => PluginType::HttpLog,
             "request-id" => PluginType::RequestId,
@@ -356,6 +359,68 @@ pub struct Certificate {
     pub cert_pem: String,
     #[serde(skip_serializing)]
     pub key_pem: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acme_config: Option<AcmeConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acme_status: Option<AcmeStatus>,
+}
+
+pub const LETS_ENCRYPT_PRODUCTION: &str = "https://acme-v02.api.letsencrypt.org/directory";
+pub const LETS_ENCRYPT_STAGING: &str = "https://acme-staging-v02.api.letsencrypt.org/directory";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AcmeChallenge {
+    #[serde(rename = "dns-01")]
+    Dns01,
+    #[serde(rename = "tls-alpn-01")]
+    TlsAlpn01,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AcmeConfig {
+    #[serde(default = "default_acme_directory")]
+    pub directory_url: String,
+    pub challenge: AcmeChallenge,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+}
+
+fn default_acme_directory() -> String {
+    LETS_ENCRYPT_PRODUCTION.to_string()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AcmeState {
+    Pending,
+    Issuing,
+    Issued,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcmeStatus {
+    pub state: AcmeState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issued_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_attempt: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
+impl AcmeStatus {
+    pub fn pending() -> Self {
+        Self {
+            state: AcmeState::Pending,
+            issued_at: None,
+            expires_at: None,
+            last_attempt: None,
+            last_error: None,
+        }
+    }
 }
 
 /// Global runtime settings (singleton).

@@ -2,6 +2,7 @@
 //! and the router matching logic. No I/O, no Pingora — this crate is shared by the
 //! store, the data plane, and the admin API.
 
+mod acme;
 mod config;
 mod matching;
 mod model;
@@ -14,3 +15,4 @@ pub use spec::*;
 
 /// Database row id type used across all entities.
 pub type Id = i64;
+pub use acme::{AlpnChallengeCertificate, AlpnChallengeRegistry};

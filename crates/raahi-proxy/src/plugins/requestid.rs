@@ -56,6 +56,7 @@ mod tests {
             path: "/",
             query: None,
             host: "h",
+            is_tls: false,
             client_ip: None,
             headers,
             route_id: 1,

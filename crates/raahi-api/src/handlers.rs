@@ -6,6 +6,7 @@ use std::convert::Infallible;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
+use chrono::Utc;
 use raahi_core::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -402,6 +403,11 @@ fn validate_plugin(spec: &PluginSpec) -> ApiResult<()> {
                 ));
             }
         }
+        PluginType::Hsts => {
+            if spec.config["max_age_secs"].as_u64().unwrap_or(63_072_000) < 1 {
+                return Err(ApiError::BadRequest("hsts needs max_age_secs >= 1".into()));
+            }
+        }
         PluginType::RequestId => {
             let name = spec.config["header_name"]
                 .as_str()
@@ -649,11 +655,24 @@ pub async fn create_certificate(
     State(s): State<AppState>,
     Json(spec): Json<CertificateSpec>,
 ) -> ApiResult<Json<Certificate>> {
-    // Validate the PEM actually parses (cert + private key) before storing.
-    raahi_proxy::validate_cert(&spec.cert_pem, &spec.key_pem).map_err(ApiError::BadRequest)?;
+    if let Some(config) = &spec.acme_config {
+        if !spec.cert_pem.is_empty() || !spec.key_pem.is_empty() {
+            return Err(ApiError::BadRequest(
+                "ACME certificates must not include cert_pem or key_pem".into(),
+            ));
+        }
+        raahi_acme::validate_config(&spec.sni, config)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    } else {
+        // Validate the PEM actually parses (cert + private key) before storing.
+        raahi_proxy::validate_cert(&spec.cert_pem, &spec.key_pem).map_err(ApiError::BadRequest)?;
+    }
     let c = s.store.create_certificate(&spec).await?;
     // Live-swap the cert store (no restart) if the HTTPS listener is already bound.
     reload_certs(&s).await?;
+    if c.acme_config.is_some() {
+        s.acme_handle.trigger();
+    }
     Ok(Json(c))
 }
 
@@ -666,6 +685,69 @@ pub async fn delete_certificate(
     }
     reload_certs(&s).await?;
     Ok(Json(json!({ "deleted": true })))
+}
+
+pub async fn renew_certificate(
+    State(s): State<AppState>,
+    Path(id): Path<Id>,
+) -> ApiResult<Json<Value>> {
+    let certificate = s
+        .store
+        .get_certificate(id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if certificate.acme_config.is_none() {
+        return Err(ApiError::BadRequest(
+            "only ACME-managed certificates can be renewed".into(),
+        ));
+    }
+    if certificate.acme_status.as_ref().is_some_and(|status| {
+        status.state == AcmeState::Issuing
+            && status
+                .last_attempt
+                .is_some_and(|attempt| attempt > Utc::now() - chrono::Duration::hours(1))
+    }) {
+        return Err(ApiError::BadRequest(
+            "certificate issuance is already in progress".into(),
+        ));
+    }
+    s.store
+        .update_certificate_acme_status(id, &AcmeStatus::pending())
+        .await?;
+    s.acme_handle.trigger();
+    Ok(Json(json!({ "queued": true })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct CloudflareTokenSpec {
+    token: String,
+}
+
+pub async fn get_cloudflare_token_status(State(s): State<AppState>) -> ApiResult<Json<Value>> {
+    let configured = s
+        .store
+        .get_cloudflare_api_token()
+        .await?
+        .is_some_and(|token| !token.trim().is_empty());
+    Ok(Json(json!({ "configured": configured })))
+}
+
+pub async fn set_cloudflare_token(
+    State(s): State<AppState>,
+    Json(spec): Json<CloudflareTokenSpec>,
+) -> ApiResult<Json<Value>> {
+    let token = spec.token.trim();
+    if token.is_empty() {
+        return Err(ApiError::BadRequest("Cloudflare API token is empty".into()));
+    }
+    s.store.set_cloudflare_api_token(Some(token)).await?;
+    s.acme_handle.trigger();
+    Ok(Json(json!({ "configured": true })))
+}
+
+pub async fn delete_cloudflare_token(State(s): State<AppState>) -> ApiResult<Json<Value>> {
+    s.store.set_cloudflare_api_token(None).await?;
+    Ok(Json(json!({ "configured": false })))
 }
 
 // ---- settings ----------------------------------------------------------------
@@ -1088,6 +1170,15 @@ pub async fn export_config(
         })
         .collect();
 
+    let acme = if q.include_secrets {
+        Some(ImportAcmeState {
+            cloudflare_api_token: s.store.get_cloudflare_api_token().await?,
+            accounts: s.store.list_acme_accounts().await?,
+        })
+    } else {
+        None
+    };
+
     Ok(Json(json!({
         "raahi_export_version": 1,
         "settings": s.store.get_settings().await?,
@@ -1098,6 +1189,7 @@ pub async fn export_config(
         "consumers": consumers_out,
         "certificates": certs,
         "wasm_modules": wasm,
+        "acme": acme,
     })))
 }
 
@@ -1130,9 +1222,20 @@ pub async fn import_config(
             })?;
         }
     }
+    if let Some(acme) = &doc.acme {
+        for account in &acme.accounts {
+            raahi_acme::validate_account_credentials(&account.credentials).map_err(|error| {
+                ApiError::BadRequest(format!(
+                    "ACME account for '{}': {error}",
+                    account.directory_url
+                ))
+            })?;
+        }
+    }
 
     let report = s.store.import(&doc).await?;
     reload(&s).await?;
     reload_certs(&s).await?;
+    s.acme_handle.trigger();
     Ok(Json(json!(report)))
 }

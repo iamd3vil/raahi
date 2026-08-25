@@ -118,12 +118,33 @@ pub fn map_wasm_module(r: &SqliteRow) -> WasmModule {
 }
 
 pub fn map_certificate(r: &SqliteRow) -> Certificate {
+    let id = r.get("id");
+    let acme_config = r.get::<Option<String>, _>("acme_config").and_then(|value| {
+        match serde_json::from_str(&value) {
+            Ok(config) => Some(config),
+            Err(error) => {
+                tracing::warn!(certificate_id = id, "invalid stored ACME config: {error}");
+                None
+            }
+        }
+    });
+    let acme_status = r.get::<Option<String>, _>("acme_status").and_then(|value| {
+        match serde_json::from_str(&value) {
+            Ok(status) => Some(status),
+            Err(error) => {
+                tracing::warn!(certificate_id = id, "invalid stored ACME status: {error}");
+                None
+            }
+        }
+    });
     Certificate {
-        id: r.get("id"),
+        id,
         name: r.get("name"),
         sni: json_strings(&r.get::<String, _>("sni")),
         cert_pem: r.get("cert_pem"),
         key_pem: r.get("key_pem"),
+        acme_config,
+        acme_status,
     }
 }
 

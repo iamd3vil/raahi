@@ -15,6 +15,7 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
+use raahi_acme::AcmeHandle;
 use raahi_proxy::{CertHandle, CertStore, ConfigHandle, Metrics};
 use raahi_store::Store;
 use tower_http::services::{ServeDir, ServeFile};
@@ -30,6 +31,7 @@ pub struct AppState {
     pub config: ConfigHandle,
     pub metrics: Arc<Metrics>,
     pub cert_handle: CertHandle,
+    pub acme_handle: AcmeHandle,
     pub ui_dir: Option<PathBuf>,
     /// SHA-256 hex of the admin token; `None` = auth disabled. Swapped live on
     /// token generate/disable so the middleware never touches the DB.
@@ -170,6 +172,16 @@ pub fn build_router(state: AppState) -> Router {
             "/certificates/{id}",
             axum::routing::delete(delete_certificate),
         )
+        .route(
+            "/certificates/{id}/renew",
+            axum::routing::post(renew_certificate),
+        )
+        .route(
+            "/acme/cloudflare-token",
+            get(get_cloudflare_token_status)
+                .put(set_cloudflare_token)
+                .delete(delete_cloudflare_token),
+        )
         .route("/settings", get(get_settings).put(update_settings))
         .route(
             "/wasm-modules",
@@ -227,6 +239,7 @@ pub struct ApiService {
     pub config: ConfigHandle,
     pub metrics: Arc<Metrics>,
     pub cert_handle: CertHandle,
+    pub acme_handle: AcmeHandle,
     pub ui_dir: Option<PathBuf>,
 }
 
@@ -258,6 +271,7 @@ impl BackgroundService for ApiService {
             config: self.config.clone(),
             metrics: self.metrics.clone(),
             cert_handle: self.cert_handle.clone(),
+            acme_handle: self.acme_handle.clone(),
             ui_dir: self.ui_dir.clone(),
             admin_hash,
         };

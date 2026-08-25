@@ -557,6 +557,57 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
         '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/certificates/{id}/renew:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [Certificates]
+      summary: Queue renewal of an ACME-managed certificate
+      operationId: renewCertificate
+      responses:
+        '200':
+          description: Renewal queued.
+          content: {application/json: {schema: {type: object, properties: {queued: {type: boolean}}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/acme/cloudflare-token:
+    get:
+      tags: [Certificates]
+      summary: Check whether a Cloudflare API token is configured
+      operationId: getCloudflareTokenStatus
+      responses:
+        '200':
+          description: Token status; the token itself is never returned.
+          content: {application/json: {schema: {type: object, properties: {configured: {type: boolean}}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    put:
+      tags: [Certificates]
+      summary: Store the Cloudflare API token used for DNS-01
+      operationId: setCloudflareToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties: {token: {type: string, minLength: 1, writeOnly: true}}
+      responses:
+        '200': {description: Token stored.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    delete:
+      tags: [Certificates]
+      summary: Remove the Cloudflare API token
+      operationId: deleteCloudflareToken
+      responses:
+        '200': {description: Token removed.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
   /api/v1/settings:
     get:
       tags: [Settings]
@@ -846,7 +897,7 @@ components:
       enum: [round_robin, random, consistent, weighted]
     PluginType:
       type: string
-      enum: [key-auth, basic-auth, jwt, acl, ip-restriction, rate-limit, proxy-cache, request-size-limit, request-termination, redirect, cors, wasm, request-transform, response-transform, response-body-transform, http-log, request-id, response-compression]
+      enum: [key-auth, basic-auth, jwt, acl, ip-restriction, rate-limit, proxy-cache, request-size-limit, request-termination, redirect, cors, wasm, request-transform, response-transform, hsts, response-body-transform, http-log, request-id, response-compression]
     PluginScope:
       type: string
       enum: [global, service, route]
@@ -1020,6 +1071,7 @@ components:
         - $ref: '#/components/schemas/RequestSizeLimitConfig'
         - $ref: '#/components/schemas/RequestTerminationConfig'
         - $ref: '#/components/schemas/RedirectConfig'
+        - $ref: '#/components/schemas/HstsConfig'
         - $ref: '#/components/schemas/CorsConfig'
         - $ref: '#/components/schemas/WasmPluginConfig'
         - $ref: '#/components/schemas/TransformConfig'
@@ -1086,6 +1138,13 @@ components:
         status: {type: integer, enum: [301, 302, 307, 308], default: 302}
         location: {type: string, format: uri}
         preserve_path: {type: boolean, default: true}
+        http_only: {type: boolean, default: false}
+    HstsConfig:
+      type: object
+      properties:
+        max_age_secs: {type: integer, format: int64, minimum: 1, default: 63072000}
+        include_subdomains: {type: boolean, default: false}
+        preload: {type: boolean, default: false}
     CorsConfig:
       type: object
       properties:
@@ -1158,12 +1217,30 @@ components:
         identifier: {type: string}
     CertificateInput:
       type: object
-      required: [name, cert_pem, key_pem]
+      required: [name]
+      description: Provide cert_pem and key_pem for a manual certificate, or acme_config for automatic management.
       properties:
         name: {type: string, minLength: 1}
         sni: {type: array, items: {type: string}, default: [], example: [api.example.com, '*.example.com']}
         cert_pem: {type: string, description: PEM certificate chain.}
         key_pem: {type: string, writeOnly: true, description: Matching PEM private key.}
+        acme_config: {$ref: '#/components/schemas/AcmeConfig'}
+    AcmeConfig:
+      type: object
+      required: [challenge]
+      properties:
+        directory_url: {type: string, default: production, description: production, staging, or a custom HTTPS ACME directory URL.}
+        challenge: {type: string, enum: [dns-01, tls-alpn-01]}
+        email: {type: string, format: email, nullable: true}
+    AcmeStatus:
+      type: object
+      required: [state]
+      properties:
+        state: {type: string, enum: [pending, issuing, issued, failed]}
+        issued_at: {type: string, format: date-time, nullable: true}
+        expires_at: {type: string, format: date-time, nullable: true}
+        last_attempt: {type: string, format: date-time, nullable: true}
+        last_error: {type: string, nullable: true}
     Certificate:
       type: object
       required: [id, name, sni, cert_pem]
@@ -1172,6 +1249,8 @@ components:
         name: {type: string}
         sni: {type: array, items: {type: string}}
         cert_pem: {type: string}
+        acme_config: {$ref: '#/components/schemas/AcmeConfig'}
+        acme_status: {$ref: '#/components/schemas/AcmeStatus'}
     SettingsInput:
       type: object
       required: [proxy_http_addr, admin_addr]

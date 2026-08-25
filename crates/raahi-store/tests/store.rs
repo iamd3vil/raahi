@@ -149,6 +149,43 @@ async fn crud_and_snapshot_roundtrip() {
 }
 
 #[tokio::test]
+async fn acme_certificate_and_secrets_roundtrip() {
+    let store = Store::connect(&tmp_db()).await.expect("connect");
+    let certificate = store
+        .create_certificate(&CertificateSpec {
+            name: "automatic".into(),
+            sni: vec!["example.com".into()],
+            cert_pem: String::new(),
+            key_pem: String::new(),
+            acme_config: Some(AcmeConfig {
+                directory_url: "staging".into(),
+                challenge: AcmeChallenge::Dns01,
+                email: Some("ops@example.com".into()),
+            }),
+        })
+        .await
+        .expect("create certificate");
+
+    assert_eq!(certificate.acme_status.unwrap().state, AcmeState::Pending);
+    store
+        .upsert_acme_account("staging", Some("ops@example.com"), "credentials")
+        .await
+        .expect("save account");
+    assert_eq!(
+        store.get_acme_account("staging").await.unwrap(),
+        Some(("credentials".into(), Some("ops@example.com".into())))
+    );
+    store
+        .set_cloudflare_api_token(Some("secret-token"))
+        .await
+        .expect("save token");
+    assert_eq!(
+        store.get_cloudflare_api_token().await.unwrap().as_deref(),
+        Some("secret-token")
+    );
+}
+
+#[tokio::test]
 async fn unique_violation_maps_to_conflict() {
     let url = tmp_db();
     let store = Store::connect(&url).await.unwrap();

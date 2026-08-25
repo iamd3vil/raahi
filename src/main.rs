@@ -15,8 +15,9 @@ use anyhow::Context;
 use clap::Parser;
 use pingora::prelude::*;
 use pingora::services::background::background_service;
+use raahi_acme::{AcmeHandle, AcmeService};
 use raahi_api::ApiService;
-use raahi_core::{RouteSpec, ServiceSpec, TargetSpec};
+use raahi_core::{AlpnChallengeRegistry, RouteSpec, ServiceSpec, TargetSpec};
 use raahi_proxy::{
     CertHandle, CertStore, HttpLogService, Metrics, RaahiProxy, StreamProxyApp, config_handle,
     log_channel, sni_tls_settings,
@@ -155,6 +156,8 @@ fn main() -> anyhow::Result<()> {
     // API (swaps it on certificate/default changes — no restart).
     let cert_count = cert_store.len();
     let cert_handle = CertHandle::new(cert_store);
+    let alpn_challenges = AlpnChallengeRegistry::default();
+    let acme_handle = AcmeHandle::default();
 
     let http_addr = cli
         .http_addr
@@ -186,20 +189,14 @@ fn main() -> anyhow::Result<()> {
 
     let https_addr = cli.https_addr.or_else(|| settings.proxy_https_addr.clone());
     if let Some(https_addr) = &https_addr {
-        if cert_count > 0 {
-            match sni_tls_settings(cert_handle.clone()) {
-                Ok(settings_tls) => {
-                    proxy_svc.add_tls_with_settings(https_addr, None, settings_tls);
-                    info!(
-                        "proxy HTTPS (boringssl) listener on {https_addr}; {cert_count} cert(s), live per-SNI selection"
-                    );
-                }
-                Err(e) => warn!("TLS listener disabled ({https_addr}): {e}"),
+        match sni_tls_settings(cert_handle.clone(), alpn_challenges.clone()) {
+            Ok(settings_tls) => {
+                proxy_svc.add_tls_with_settings(https_addr, None, settings_tls);
+                info!(
+                    "proxy HTTPS (boringssl) listener on {https_addr}; {cert_count} issued cert(s), live per-SNI selection"
+                );
             }
-        } else {
-            info!(
-                "HTTPS address set but no certificates configured; HTTPS disabled (add a certificate and restart to bind the listener)"
-            );
+            Err(e) => warn!("TLS listener disabled ({https_addr}): {e}"),
         }
     }
 
@@ -230,12 +227,24 @@ fn main() -> anyhow::Result<()> {
         config: config.clone(),
         metrics: metrics.clone(),
         cert_handle: cert_handle.clone(),
+        acme_handle: acme_handle.clone(),
         ui_dir: Some(cli.ui_dir.clone()),
     };
     server.add_service(background_service("admin-api", api));
     info!("admin API on {admin_addr}");
 
     server.add_service(background_service("http-log", HttpLogService::new(log_rx)));
+
+    server.add_service(background_service(
+        "acme",
+        AcmeService {
+            db_url: cli.db.clone(),
+            cert_handle: cert_handle.clone(),
+            challenges: alpn_challenges,
+            handle: acme_handle,
+            interval: Duration::from_secs(6 * 60 * 60),
+        },
+    ));
 
     // JWKS refresher for jwt plugins in identity-provider mode.
     server.add_service(background_service(

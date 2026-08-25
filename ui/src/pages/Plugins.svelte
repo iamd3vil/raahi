@@ -74,10 +74,11 @@
     'proxy-cache': { ttl_secs: 60, max_body_bytes: 1048576, methods: ['GET'], cache_key_query: true },
     'request-size-limit': { max_bytes: 10485760, require_content_length: false },
     'request-termination': { status: 503, message: 'Service temporarily unavailable', content_type: 'text/plain; charset=utf-8' },
-    redirect: { status: 302, location: '', preserve_path: true },
+    redirect: { status: 302, location: '', preserve_path: true, http_only: false },
     cors: { allow_origins: ['*'], allow_methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], allow_headers: ['*'], allow_credentials: false, max_age: 3600 },
     'request-transform': { add: {}, remove: [] },
     'response-transform': { add: {}, remove: [] },
+    hsts: { max_age_secs: 63072000, include_subdomains: false, preload: false },
     'response-body-transform': { replace: [], max_body_bytes: 1048576, content_types: ['text/', 'application/json'] },
     'http-log': { endpoint: '', headers: {}, batch_max: 50, flush_interval_ms: 2000 },
     'request-id': { header_name: 'X-Request-Id', preserve: true, echo_downstream: true },
@@ -99,6 +100,7 @@
     cors: 'Answers preflight requests and adds CORS headers to responses.',
     'request-transform': 'Adds or removes request headers before proxying upstream.',
     'response-transform': 'Adds or removes response headers before returning downstream.',
+    hsts: 'Adds Strict-Transport-Security to HTTPS responses only.',
     'response-body-transform': 'Find/replace on text response bodies (buffered up to a size cap; binary passes through).',
     'http-log': 'POSTs request records (JSON batches) to an external collector, off the hot path.',
     'request-id': 'Tags each request with a correlation id (UUID) forwarded upstream and echoed on the response.',
@@ -204,6 +206,7 @@
         status: Number(cfg.status) || 302,
         location: String(cfg.location ?? ''),
         preserve_path: cfg.preserve_path !== false,
+        http_only: !!cfg.http_only,
       };
     if (t === 'http-log')
       return {
@@ -219,6 +222,12 @@
         echo_downstream: cfg.echo_downstream !== false,
       };
     if (t === 'response-compression') return { level: Math.min(9, Math.max(1, Number(cfg.level) || 5)) };
+    if (t === 'hsts')
+      return {
+        max_age_secs: Math.max(1, Number(cfg.max_age_secs) || 63072000),
+        include_subdomains: !!cfg.include_subdomains,
+        preload: !!cfg.preload,
+      };
     if (t === 'wasm') {
       let moduleConfig: unknown = cfg.config ?? {};
       if (typeof cfg.config_json === 'string') {
@@ -417,6 +426,8 @@
         const removes = (c.remove ?? []).length;
         return `+${adds} header${adds === 1 ? '' : 's'}, −${removes}`;
       }
+      case 'hsts':
+        return `max-age=${c.max_age_secs ?? 63072000}${c.include_subdomains ? ' · subdomains' : ''}${c.preload ? ' · preload' : ''}`;
       case 'response-body-transform': {
         const n = (c.replace ?? []).length;
         return `${n} replacement${n === 1 ? '' : 's'}`;
@@ -656,6 +667,10 @@
       <input type="checkbox" role="switch" checked={cfg.preserve_path} onchange={() => (cfg.preserve_path = !cfg.preserve_path)} />
       Append the incoming path and query
     </label>
+    <label class="opt">
+      <input type="checkbox" role="switch" checked={cfg.http_only} onchange={() => (cfg.http_only = !cfg.http_only)} />
+      Redirect HTTP only; proxy HTTPS normally
+    </label>
   {:else if form.type === 'http-log'}
     <label data-field>
       Collector endpoint
@@ -693,6 +708,19 @@
       <span data-hint>
         1 (fastest) to 9 (smallest), applied to whichever algorithm the client accepts — gzip, brotli, or zstd.
       </span>
+    </label>
+  {:else if form.type === 'hsts'}
+    <label data-field>
+      Max age <span class="faint">(seconds)</span>
+      <input type="number" min="1" bind:value={cfg.max_age_secs} />
+    </label>
+    <label class="opt">
+      <input type="checkbox" role="switch" checked={cfg.include_subdomains} onchange={() => (cfg.include_subdomains = !cfg.include_subdomains)} />
+      Include subdomains
+    </label>
+    <label class="opt">
+      <input type="checkbox" role="switch" checked={cfg.preload} onchange={() => (cfg.preload = !cfg.preload)} />
+      Emit the preload directive
     </label>
   {:else if form.type === 'wasm'}
     {#if modules.length === 0}

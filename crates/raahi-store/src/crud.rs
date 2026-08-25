@@ -568,15 +568,31 @@ impl Store {
     }
 
     pub async fn create_certificate(&self, c: &CertificateSpec) -> Result<Certificate, StoreError> {
-        let res =
-            sqlx::query("INSERT INTO certificates (name, sni, cert_pem, key_pem) VALUES (?,?,?,?)")
-                .bind(&c.name)
-                .bind(serde_json::to_string(&c.sni).unwrap())
-                .bind(&c.cert_pem)
-                .bind(&c.key_pem)
-                .execute(&self.pool)
-                .await
-                .map_err(map_err)?;
+        let acme_config = c
+            .acme_config
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| StoreError::Invalid(format!("ACME config: {e}")))?;
+        let acme_status = c
+            .acme_config
+            .as_ref()
+            .map(|_| serde_json::to_string(&AcmeStatus::pending()))
+            .transpose()
+            .map_err(|e| StoreError::Invalid(format!("ACME status: {e}")))?;
+        let res = sqlx::query(
+            "INSERT INTO certificates \
+             (name, sni, cert_pem, key_pem, acme_config, acme_status) VALUES (?,?,?,?,?,?)",
+        )
+        .bind(&c.name)
+        .bind(serde_json::to_string(&c.sni).unwrap())
+        .bind(&c.cert_pem)
+        .bind(&c.key_pem)
+        .bind(acme_config)
+        .bind(acme_status)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
         Ok(self
             .get_certificate(res.last_insert_rowid())
             .await?
@@ -589,6 +605,133 @@ impl Store {
             .execute(&self.pool)
             .await?;
         Ok(res.rows_affected() > 0)
+    }
+
+    pub async fn update_certificate_acme_status(
+        &self,
+        id: Id,
+        status: &AcmeStatus,
+    ) -> Result<(), StoreError> {
+        let result = sqlx::query("UPDATE certificates SET acme_status=? WHERE id=?")
+            .bind(
+                serde_json::to_string(status)
+                    .map_err(|e| StoreError::Invalid(format!("serialize ACME status: {e}")))?,
+            )
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(StoreError::NotFound);
+        }
+        Ok(())
+    }
+
+    pub async fn try_claim_acme_certificate(
+        &self,
+        id: Id,
+        status: &AcmeStatus,
+        stale_before: chrono::DateTime<Utc>,
+    ) -> Result<bool, StoreError> {
+        let result = sqlx::query(
+            "UPDATE certificates SET acme_status=? WHERE id=? AND (\
+             json_extract(acme_status, '$.state') IS NULL OR \
+             json_extract(acme_status, '$.state') != 'issuing' OR \
+             json_extract(acme_status, '$.last_attempt') < ?)",
+        )
+        .bind(
+            serde_json::to_string(status)
+                .map_err(|e| StoreError::Invalid(format!("serialize ACME status: {e}")))?,
+        )
+        .bind(id)
+        .bind(stale_before.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    pub async fn update_acme_certificate(
+        &self,
+        id: Id,
+        cert_pem: &str,
+        key_pem: &str,
+        status: &AcmeStatus,
+    ) -> Result<(), StoreError> {
+        let result =
+            sqlx::query("UPDATE certificates SET cert_pem=?, key_pem=?, acme_status=? WHERE id=?")
+                .bind(cert_pem)
+                .bind(key_pem)
+                .bind(
+                    serde_json::to_string(status)
+                        .map_err(|e| StoreError::Invalid(format!("serialize ACME status: {e}")))?,
+                )
+                .bind(id)
+                .execute(&self.pool)
+                .await?;
+        if result.rows_affected() == 0 {
+            return Err(StoreError::NotFound);
+        }
+        Ok(())
+    }
+
+    pub async fn get_acme_account(
+        &self,
+        directory_url: &str,
+    ) -> Result<Option<(String, Option<String>)>, StoreError> {
+        let row = sqlx::query("SELECT credentials, email FROM acme_accounts WHERE directory_url=?")
+            .bind(directory_url)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|r| (r.get("credentials"), r.get("email"))))
+    }
+
+    pub async fn upsert_acme_account(
+        &self,
+        directory_url: &str,
+        email: Option<&str>,
+        credentials: &str,
+    ) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT INTO acme_accounts (directory_url, email, credentials) VALUES (?,?,?) \
+             ON CONFLICT(directory_url) DO UPDATE SET email=excluded.email, \
+             credentials=excluded.credentials, updated_at=datetime('now')",
+        )
+        .bind(directory_url)
+        .bind(email)
+        .bind(credentials)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_acme_accounts(&self) -> Result<Vec<ImportAcmeAccount>, StoreError> {
+        let rows = sqlx::query(
+            "SELECT directory_url, email, credentials FROM acme_accounts ORDER BY directory_url",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| ImportAcmeAccount {
+                directory_url: row.get("directory_url"),
+                email: row.get("email"),
+                credentials: row.get("credentials"),
+            })
+            .collect())
+    }
+
+    pub async fn get_cloudflare_api_token(&self) -> Result<Option<String>, StoreError> {
+        let row = sqlx::query("SELECT cloudflare_api_token FROM settings WHERE id=1")
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.and_then(|r| r.get("cloudflare_api_token")))
+    }
+
+    pub async fn set_cloudflare_api_token(&self, token: Option<&str>) -> Result<(), StoreError> {
+        sqlx::query("UPDATE settings SET cloudflare_api_token=? WHERE id=1")
+            .bind(token)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     // ---- settings -------------------------------------------------------------

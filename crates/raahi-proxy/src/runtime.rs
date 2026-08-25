@@ -134,8 +134,7 @@ impl RuntimeConfig {
                         .map(|b| b.healthy.clone())
                         .unwrap_or_else(|| Arc::new(AtomicBool::new(true)));
 
-                    let addrs: Vec<SocketAddr> = match (t.host.as_str(), t.port).to_socket_addrs()
-                    {
+                    let addrs: Vec<SocketAddr> = match (t.host.as_str(), t.port).to_socket_addrs() {
                         Ok(it) => it.collect(),
                         Err(e) => {
                             tracing::warn!(
@@ -244,7 +243,10 @@ mod tests {
     #[test]
     fn active_addr_uses_elected_index_and_clamps_out_of_range() {
         let b = backend(
-            vec!["127.0.0.1:1".parse().unwrap(), "127.0.0.1:2".parse().unwrap()],
+            vec![
+                "127.0.0.1:1".parse().unwrap(),
+                "127.0.0.1:2".parse().unwrap(),
+            ],
             1,
         );
         assert_eq!(b.addr_string(), "127.0.0.1:2");

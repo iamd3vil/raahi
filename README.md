@@ -43,6 +43,8 @@ SQLite and atomically swapped into the running proxy with no restart.
     responses carry it)
   - `response-compression` (gzip / brotli / zstd for downstream clients, negotiated
     from `Accept-Encoding` by Pingora's built-in compression module)
+  - `hsts` (`Strict-Transport-Security` on direct HTTPS responses only, with optional
+    `includeSubDomains` and `preload` directives)
   - `proxy-cache` (in-memory TTL response cache with `x-cache` headers and a purge API)
   - `request-transform` / `response-transform` (add / remove headers) and
     `response-body-transform` (find/replace on text bodies)
@@ -58,7 +60,8 @@ SQLite and atomically swapped into the running proxy with no restart.
   `?access_token=`). Lockout recovery: clear `settings.admin_token_hash` in SQLite
   and restart.
 - **TLS termination** via boringssl with per-SNI certificate selection and live (no-restart)
-  certificate reload, and **upstream TLS**.
+  certificate reload, **automatic ACME issuance and renewal** via TLS-ALPN-01 or Cloudflare
+  DNS-01 (including wildcards), and **upstream TLS**.
 - **Health**: active checks per target (TCP connect, or HTTP GET on a per-service
   `health_path` with 2xx/3xx = pass) with consecutive-failure thresholds, plus
   passive circuit breaking — a failed connect ejects the backend immediately.
@@ -88,6 +91,7 @@ SQLite and atomically swapped into the running proxy with no restart.
 | `raahi-store` | SQLite persistence (sqlx), migrations, CRUD, and snapshot building. |
 | `raahi-proxy` | The Pingora `ProxyHttp` data plane: LB, plugins, health checks, metrics, hot reload. |
 | `raahi-api`   | axum admin REST API + UI serving, run as a Pingora background service. |
+| `raahi-acme`  | ACME accounts, Cloudflare DNS-01, TLS-ALPN-01, issuance, and renewal. |
 | `raahi` (bin) | Wires the store, data plane, and control plane into one Pingora server. |
 | `ui/`         | Svelte 5 + Vite SPA (the "Aurora Transit" admin UI). |
 
@@ -170,12 +174,17 @@ HTTPS listener serves the right one based on the SNI server name (exact or `*.wi
 falling back to the active/default certificate for non-SNI or unmatched requests. Upstream
 (proxy→backend) TLS is supported too.
 
-Manage certificates in the UI — add, replace, remove, or change the default, and the
-running HTTPS listener picks them up **live, with no restart**. (One exception: if HTTPS
-starts with zero certificates the listener isn't bound, so enabling HTTPS for the very
-first time needs a restart.) Cert private keys are treated as secrets: they stay in
-SQLite and memory, are never logged, and are never returned by ordinary resource APIs.
-Protect the database and any export made with `include_secrets=true` accordingly.
+Manage certificates in the UI — upload PEM material or create an ACME-managed certificate,
+replace/remove it, or change the default. The running HTTPS listener picks changes up **live,
+with no restart**, including the first certificate issued after startup.
+
+ACME supports Let's Encrypt production/staging or a custom HTTPS directory. TLS-ALPN-01
+requires the requested domains to resolve to Raahi with public port 443 reachable. DNS-01
+uses a Cloudflare API token and is required for wildcard names. The background service issues
+missing certificates immediately, retries failures, scans every six hours, and renews within
+30 days of expiry. ACME account credentials, Cloudflare tokens, and certificate private keys
+stay in SQLite and memory, are never logged or returned by ordinary APIs, and are included only
+in exports made with `include_secrets=true`. Protect the database and secret exports accordingly.
 
 ## Security notes
 

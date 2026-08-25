@@ -43,6 +43,7 @@ pub struct Ctx {
     upstream_host: Option<String>,
     upstream_addr: Option<String>,
     client_ip: Option<String>,
+    is_tls: bool,
     pub consumer: Option<String>,
     req_add: Vec<(String, String)>,
     req_remove: Vec<String>,
@@ -144,6 +145,11 @@ impl ProxyHttp for RaahiProxy {
         }
 
         let (verdict, compression_level): (Verdict, Option<u32>) = 'matched: {
+            let is_tls = session
+                .as_downstream()
+                .digest()
+                .is_some_and(|digest| digest.ssl_digest.is_some());
+            ctx.is_tls = is_tls;
             let req = session.req_header();
             ctx.client_ip = client_ip(session);
             ctx.method = req.method.as_str().to_string();
@@ -217,6 +223,7 @@ impl ProxyHttp for RaahiProxy {
                 path: &ctx.path,
                 query,
                 host: &ctx.host,
+                is_tls,
                 client_ip: ctx.client_ip.as_deref(),
                 headers: &req.headers,
                 route_id,
@@ -259,7 +266,10 @@ impl ProxyHttp for RaahiProxy {
             }
             Verdict::NoBackend => {
                 session
-                    .respond_error_with_body(502, Bytes::from_static(b"Raahi: no upstream backend\n"))
+                    .respond_error_with_body(
+                        502,
+                        Bytes::from_static(b"Raahi: no upstream backend\n"),
+                    )
                     .await?;
                 return Ok(true);
             }
@@ -391,7 +401,10 @@ impl ProxyHttp for RaahiProxy {
         if !ctx.host.is_empty() {
             let _ = upstream_request.insert_header("x-forwarded-host", ctx.host.as_str());
         }
-        let _ = upstream_request.insert_header("x-forwarded-proto", "http");
+        let _ = upstream_request.insert_header(
+            "x-forwarded-proto",
+            if ctx.is_tls { "https" } else { "http" },
+        );
 
         // Plugin request-header transforms.
         for k in &ctx.req_remove {
