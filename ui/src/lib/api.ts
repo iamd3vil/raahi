@@ -18,6 +18,11 @@ import type {
   ImportReport,
   TargetHealth,
   WasmModule,
+  AuthStatus,
+  Principal,
+  Role,
+  SsoConfigView,
+  User,
 } from './types';
 
 import { ui } from './state.svelte';
@@ -62,7 +67,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
-    if (res.status === 401 && !path.startsWith('/admin/')) {
+    if (res.status === 401 && !path.startsWith('/admin/') && !path.startsWith('/auth/')) {
       ui.authRequired = true;
     }
     const msg = (data && (data.error as string)) || `${res.status} ${res.statusText}`;
@@ -159,10 +164,34 @@ export const api = {
     req<WasmModule>('POST', '/wasm-modules', m),
   deleteWasmModule: (id: number) => req('DELETE', `/wasm-modules/${id}`),
 
-  // admin auth
-  adminStatus: () => req<{ auth_enabled: boolean }>('GET', '/admin/status'),
+  // admin auth: token, sessions, users, SSO
+  adminStatus: () => req<AuthStatus>('GET', '/admin/status'),
   createAdminToken: () => req<{ token: string }>('POST', '/admin/token'),
   deleteAdminToken: () => req('DELETE', '/admin/token'),
+  login: (email: string, password: string) =>
+    req<Principal>('POST', '/auth/login', { email, password }),
+  logout: () => req('POST', '/auth/logout'),
+  me: () => req<Principal>('GET', '/auth/me'),
+  changePassword: (current_password: string, new_password: string) =>
+    req('PUT', '/auth/me/password', { current_password, new_password }),
+  listUsers: () => req<User[]>('GET', '/users'),
+  createUser: (u: { email: string; name: string; role: Role; password?: string }) =>
+    req<User>('POST', '/users', u),
+  updateUser: (id: number, u: { email: string; name: string; role: Role; password?: string }) =>
+    req<User>('PUT', `/users/${id}`, u),
+  deleteUser: (id: number) => req('DELETE', `/users/${id}`),
+  getSsoConfig: () => req<{ enabled: boolean; config: SsoConfigView | null }>('GET', '/sso/config'),
+  setSsoConfig: (c: {
+    issuer: string;
+    client_id: string;
+    client_secret?: string;
+    label: string;
+    auto_provision_role: Role | null;
+    allowed_domains: string[];
+  }) => req<{ enabled: boolean; config: SsoConfigView }>('PUT', '/sso/config', c),
+  deleteSsoConfig: () => req('DELETE', '/sso/config'),
+  /** Top-level navigation target that starts the OIDC login. */
+  ssoStartUrl: () => `${BASE}/auth/sso/start`,
   routerTest: (q: { host: string; path: string; method: string; headers?: string }) =>
     req<RouterTestResult>(
       'GET',

@@ -55,10 +55,14 @@ SQLite and atomically swapped into the running proxy with no restart.
   JSON-over-memory ABI (`raahi_alloc`, `on_request`, `on_response`) and can
   short-circuit requests, mutate headers, and react to upstream responses. Multiple
   wasm plugins stack on one route. See `examples/wasm/`.
-- **Admin API auth**: optional bearer-token protection for the admin API (SHA-256
-  token, generated/rotated from the UI or `POST /api/v1/admin/token`; SSE uses
-  `?access_token=`). Lockout recovery: clear `settings.admin_token_hash` in SQLite
-  and restart.
+- **Admin users, roles, and SSO**: password sign-in (bcrypt) and OpenID Connect
+  single sign-on (authorization code + PKCE; Google, Keycloak, Authentik, Pocket ID,
+  Auth0, ...) with cookie sessions, plus `viewer` / `editor` / `admin` roles enforced by
+  the API. Optional auto-provisioning on first SSO login, restricted by email domain.
+  The legacy admin bearer token (SHA-256, generated/rotated from the UI or
+  `POST /api/v1/admin/token`; SSE uses `?access_token=`) remains for automation and
+  acts as admin. Auth is open until a user or token exists. Lockout recovery: empty
+  the `users` table / clear `settings.admin_token_hash` in SQLite and restart.
 - **TLS termination** via boringssl with per-SNI certificate selection and live (no-restart)
   certificate reload, **automatic ACME issuance and renewal** via TLS-ALPN-01 or Cloudflare
   DNS-01 (including wildcards), and **upstream TLS**.
@@ -90,7 +94,7 @@ SQLite and atomically swapped into the running proxy with no restart.
 | `raahi-core`  | Domain types, the compiled `ProxyConfig` snapshot, and router matching (pure, unit-tested). |
 | `raahi-store` | SQLite persistence (sqlx), migrations, CRUD, and snapshot building. |
 | `raahi-proxy` | The Pingora `ProxyHttp` data plane: LB, plugins, health checks, metrics, hot reload. |
-| `raahi-api`   | axum admin REST API + UI serving, run as a Pingora background service. |
+| `raahi-api`   | axum admin REST API + UI serving (users, roles, sessions, OIDC SSO), run as a Pingora background service. |
 | `raahi-acme`  | ACME accounts, Cloudflare DNS-01, TLS-ALPN-01, issuance, and renewal. |
 | `raahi` (bin) | Wires the store, data plane, and control plane into one Pingora server. |
 | `ui/`         | Svelte 5 + Vite SPA (the "Aurora Transit" admin UI). |
@@ -188,11 +192,15 @@ in exports made with `include_secrets=true`. Protect the database and secret exp
 
 ## Security notes
 
-- **Admin API authentication is optional.** It defaults to loopback and is open until an
-  admin token is generated. Once enabled, send the token as `Authorization: Bearer ...`
-  or `X-Admin-Token`. Keep network controls in place if the listener is exposed beyond
-  localhost; `/healthz`, `/metrics`, `/openapi.yaml`, `/docs`, and
-  `/api/v1/admin/status` intentionally remain public.
+- **Admin API authentication is off until configured.** It defaults to loopback and is
+  open until a user or admin token exists. Then callers need a session cookie (password
+  or SSO sign-in; `HttpOnly`, `SameSite=Lax`, `Secure` behind HTTPS) or the admin token
+  (`Authorization: Bearer ...` / `X-Admin-Token`). Roles gate what a session may do;
+  failed password logins are rate limited per client IP. Keep network controls in place
+  if the listener is exposed beyond localhost; `/healthz`, `/metrics`, `/openapi.yaml`,
+  `/docs`, `/api/v1/admin/status`, and the login/SSO endpoints intentionally remain public.
+- **User passwords are bcrypt-hashed**; session tokens are stored as SHA-256 hashes; the
+  SSO client secret lives in SQLite and is never returned by the API.
 - Basic-auth passwords are hashed with **bcrypt**; Basic/JWT secrets and TLS private keys
   are not returned by ordinary resource APIs or written to logs. Key-auth API keys are
   identifiers and are returned by credential listings, so protect those responses.

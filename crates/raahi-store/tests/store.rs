@@ -208,3 +208,88 @@ async fn unique_violation_maps_to_conflict() {
     );
     let _ = std::fs::remove_file(url.trim_start_matches("sqlite://"));
 }
+
+#[tokio::test]
+async fn users_sessions_and_sso_config() {
+    let store = Store::connect(&tmp_db()).await.expect("connect");
+    assert_eq!(store.count_users().await.unwrap(), 0);
+
+    let admin = store
+        .create_user("Admin@Example.com", "Root", Role::Admin, Some("$2b$hash"))
+        .await
+        .expect("create admin");
+    assert_eq!(admin.email, "admin@example.com", "emails are normalized");
+    assert!(admin.has_password);
+    assert!(
+        store
+            .create_user("admin@example.com", "", Role::Viewer, None)
+            .await
+            .is_err()
+    );
+
+    let viewer = store
+        .create_user("v@example.com", "", Role::Viewer, None)
+        .await
+        .unwrap();
+    assert!(!viewer.has_password);
+    assert_eq!(store.count_users().await.unwrap(), 2);
+    assert_eq!(store.count_admins().await.unwrap(), 1);
+    assert_eq!(
+        store
+            .get_user_by_email("ADMIN@example.com")
+            .await
+            .unwrap()
+            .map(|u| u.id),
+        Some(admin.id)
+    );
+
+    // Update keeps the password hash when none is supplied.
+    let updated = store
+        .update_user(admin.id, "admin@example.com", "Renamed", Role::Admin, None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated.name, "Renamed");
+    assert_eq!(
+        store
+            .get_user_password_hash(admin.id)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("$2b$hash")
+    );
+
+    // Sessions: live, expired, and cascade on user delete.
+    let expires = store
+        .create_session("h1", viewer.id, chrono::Duration::hours(1))
+        .await
+        .unwrap();
+    assert!(expires > chrono::Utc::now());
+    assert_eq!(
+        store.session_user("h1").await.unwrap().map(|u| u.id),
+        Some(viewer.id)
+    );
+    store
+        .create_session("h-expired", viewer.id, chrono::Duration::seconds(-5))
+        .await
+        .unwrap();
+    assert!(store.session_user("h-expired").await.unwrap().is_none());
+    assert!(store.session_user("nope").await.unwrap().is_none());
+    assert!(store.delete_user(viewer.id).await.unwrap());
+    assert!(store.session_user("h1").await.unwrap().is_none());
+
+    // SSO config round-trips as JSON in settings.
+    assert!(store.get_sso_config().await.unwrap().is_none());
+    let cfg = SsoConfig {
+        issuer: "https://idp.example".into(),
+        client_id: "raahi".into(),
+        client_secret: "s3cret".into(),
+        label: "Example".into(),
+        auto_provision_role: Some(Role::Editor),
+        allowed_domains: vec!["example.com".into()],
+    };
+    store.set_sso_config(Some(&cfg)).await.unwrap();
+    assert_eq!(store.get_sso_config().await.unwrap(), Some(cfg));
+    store.set_sso_config(None).await.unwrap();
+    assert!(store.get_sso_config().await.unwrap().is_none());
+}

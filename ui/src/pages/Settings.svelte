@@ -1,20 +1,22 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api, ApiError, setAdminToken } from '../lib/api';
-  import type { Certificate, ConfigSummary, LbAlgorithm, Settings } from '../lib/types';
-  import { toast } from '../lib/state.svelte';
+  import type { AuthStatus, Certificate, ConfigSummary, LbAlgorithm, Role, Settings, SsoConfigView } from '../lib/types';
+  import { toast, ui, hasRole } from '../lib/state.svelte';
 
   let settings = $state<Settings | null>(null);
   let certs = $state<Certificate[]>([]);
   let summary = $state<ConfigSummary | null>(null);
   let loading = $state(true);
   let exporting = $state(false);
-  let authEnabled = $state(false);
+  let auth = $state<AuthStatus | null>(null);
+  const authEnabled = $derived(auth?.auth_enabled ?? false);
+  const tokenEnabled = $derived(auth?.token_enabled ?? false);
   let freshToken = $state('');
 
   async function loadAuth() {
     try {
-      authEnabled = (await api.adminStatus()).auth_enabled;
+      auth = await api.adminStatus();
     } catch {
       /* ignore */
     }
@@ -22,7 +24,7 @@
 
   async function generateToken() {
     if (
-      authEnabled &&
+      tokenEnabled &&
       !confirm('Rotate the admin token? The old token stops working immediately.')
     )
       return;
@@ -37,14 +39,101 @@
     }
   }
 
-  async function disableAuth() {
-    if (!confirm('Disable admin API auth? Anyone who can reach the admin port gets full access.')) return;
+  async function disableToken() {
+    const warn = auth?.users_exist
+      ? 'Disable the admin token? Automation using it stops working; user sign-in is unaffected.'
+      : 'Disable the admin token? With no users, anyone who can reach the admin port gets full access.';
+    if (!confirm(warn)) return;
     try {
       await api.deleteAdminToken();
       setAdminToken(null);
       freshToken = '';
       await loadAuth();
-      toast('Admin auth disabled', 'ok');
+      toast('Admin token disabled', 'ok');
+    } catch (e) {
+      toast((e as ApiError).message, 'err');
+    }
+  }
+
+  // ---- SSO (OpenID Connect) ----
+  let sso = $state<SsoConfigView | null>(null);
+  let ssoForm = $state({
+    issuer: '',
+    client_id: '',
+    client_secret: '',
+    label: '',
+    auto_provision: false,
+    auto_provision_role: 'viewer' as Role,
+    allowed_domains: '',
+  });
+  let ssoSaving = $state(false);
+  const redirectUri = `${location.origin}/api/v1/auth/sso/callback`;
+
+  async function loadSso() {
+    try {
+      const r = await api.getSsoConfig();
+      sso = r.config;
+      ssoForm = {
+        issuer: sso?.issuer ?? '',
+        client_id: sso?.client_id ?? '',
+        client_secret: '',
+        label: sso?.label ?? '',
+        auto_provision: !!sso?.auto_provision_role,
+        auto_provision_role: sso?.auto_provision_role ?? 'viewer',
+        allowed_domains: (sso?.allowed_domains ?? []).join(', '),
+      };
+    } catch {
+      /* non-admins get 403; the card is hidden for them */
+    }
+  }
+
+  async function saveSso() {
+    ssoSaving = true;
+    try {
+      await api.setSsoConfig({
+        issuer: ssoForm.issuer,
+        client_id: ssoForm.client_id,
+        client_secret: ssoForm.client_secret || undefined,
+        label: ssoForm.label,
+        auto_provision_role: ssoForm.auto_provision ? ssoForm.auto_provision_role : null,
+        allowed_domains: ssoForm.allowed_domains.split(',').map((d) => d.trim()).filter(Boolean),
+      });
+      toast('SSO configuration saved', 'ok');
+      await Promise.all([loadSso(), loadAuth()]);
+    } catch (e) {
+      toast((e as ApiError).message, 'err');
+    } finally {
+      ssoSaving = false;
+    }
+  }
+
+  async function disableSso() {
+    if (!confirm('Disable SSO? SSO-only users will no longer be able to sign in.')) return;
+    try {
+      await api.deleteSsoConfig();
+      toast('SSO disabled', 'ok');
+      await Promise.all([loadSso(), loadAuth()]);
+    } catch (e) {
+      toast((e as ApiError).message, 'err');
+    }
+  }
+
+  function copyRedirect() {
+    navigator.clipboard?.writeText(redirectUri);
+    toast('Redirect URI copied', 'ok');
+  }
+
+  // ---- own password ----
+  let pw = $state({ current: '', next: '', confirm: '' });
+  async function changePassword() {
+    if (pw.next !== pw.confirm) {
+      toast('New passwords do not match', 'err');
+      return;
+    }
+    try {
+      await api.changePassword(pw.current, pw.next);
+      pw = { current: '', next: '', confirm: '' };
+      toast('Password updated', 'ok');
     } catch (e) {
       toast((e as ApiError).message, 'err');
     }
@@ -161,6 +250,7 @@
   onMount(() => {
     load();
     loadAuth();
+    if (hasRole('admin')) loadSso();
   });
 </script>
 
@@ -243,28 +333,132 @@
         </div>
         <p class="muted" style="margin:0 0 12px">
           {#if authEnabled}
-            The admin API requires a bearer token. Rotate it any time — the old token stops working immediately.
+            Sign-in is required. Users get roles (viewer / editor / admin); the admin token is a separate
+            full-access credential for automation.
           {:else}
-            The admin API is unauthenticated (loopback binding is the only protection). Generate a token to require
-            <code>Authorization: Bearer …</code> on every request.
+            The admin API is unauthenticated (loopback binding is the only protection). Create a user under
+            <strong>Users</strong> or generate an admin token to require sign-in.
           {/if}
         </p>
-        {#if freshToken}
-          <div class="token-box">
-            <div class="hint" style="margin-bottom:6px">Your new token — store it now, it is not retrievable later:</div>
-            <div class="token-row">
-              <code class="token">{freshToken}</code>
-              <button class="outline small" onclick={copyToken}>Copy</button>
+        {#if hasRole('admin')}
+          <h3 class="sub">Admin token</h3>
+          {#if freshToken}
+            <div class="token-box">
+              <div class="hint" style="margin-bottom:6px">Your new token — store it now, it is not retrievable later:</div>
+              <div class="token-row">
+                <code class="token">{freshToken}</code>
+                <button class="outline small" onclick={copyToken}>Copy</button>
+              </div>
             </div>
-          </div>
-        {/if}
-        <div class="flex" style="gap:8px">
-          <button class="outline" onclick={generateToken}>{authEnabled ? 'Rotate token' : 'Generate token'}</button>
-          {#if authEnabled}
-            <button class="ghost" data-variant="danger" onclick={disableAuth}>Disable auth</button>
           {/if}
-        </div>
+          <div class="flex" style="gap:8px">
+            <button class="outline" onclick={generateToken}>{tokenEnabled ? 'Rotate token' : 'Generate token'}</button>
+            {#if tokenEnabled}
+              <button class="ghost" data-variant="danger" onclick={disableToken}>Disable token</button>
+            {/if}
+          </div>
+          <p class="hint" style="margin-top:8px">
+            Send it as <code>Authorization: Bearer …</code> or <code>X-Admin-Token</code>. Token callers act as admin.
+          </p>
+        {/if}
       </div>
+
+      {#if hasRole('admin')}
+        <div class="card" style="margin-top:16px">
+          <div class="panel-head">
+            <h2>Single sign-on</h2>
+            <span class="badge" data-variant={sso ? 'success' : undefined}>{sso ? 'enabled' : 'off'}</span>
+          </div>
+          <p class="muted" style="margin:0 0 12px">
+            OpenID Connect authorization-code flow with PKCE. Works with Google, Keycloak, Authentik, Pocket ID,
+            Auth0, Zitadel, and any compliant provider. Register this redirect URI with the provider:
+          </p>
+          <div class="token-row" style="margin-bottom:12px">
+            <code class="token">{redirectUri}</code>
+            <button class="outline small" onclick={copyRedirect}>Copy</button>
+          </div>
+          <label data-field>
+            Issuer URL
+            <input class="mono" bind:value={ssoForm.issuer} placeholder="https://accounts.google.com" />
+            <span data-hint>Discovery is read from <code>/.well-known/openid-configuration</code>.</span>
+          </label>
+          <div class="row">
+            <label data-field>
+              Client ID
+              <input class="mono" bind:value={ssoForm.client_id} />
+            </label>
+            <label data-field>
+              Client secret
+              <input class="mono" type="password" autocomplete="off" bind:value={ssoForm.client_secret}
+                placeholder={sso?.client_secret_set ? '•••••••• (stored; blank keeps it)' : ''} />
+            </label>
+          </div>
+          <label data-field>
+            Button label <span class="faint">(optional)</span>
+            <input bind:value={ssoForm.label} placeholder="Google" />
+          </label>
+          <label style="margin-top:6px">
+            <input type="checkbox" role="switch" bind:checked={ssoForm.auto_provision} />
+            Create accounts on first sign-in
+          </label>
+          {#if ssoForm.auto_provision}
+            <div class="row" style="margin-top:8px">
+              <label data-field>
+                Role for new accounts
+                <select bind:value={ssoForm.auto_provision_role}>
+                  <option value="viewer">viewer</option>
+                  <option value="editor">editor</option>
+                  <option value="admin">admin</option>
+                </select>
+              </label>
+              <label data-field>
+                Allowed email domains
+                <input class="mono" bind:value={ssoForm.allowed_domains} placeholder="example.com, corp.example" />
+                <span data-hint>Comma-separated. Empty allows any domain — avoid that with public providers.</span>
+              </label>
+            </div>
+          {:else}
+            <p class="hint" style="margin-top:6px">Only users already listed under <strong>Users</strong> can sign in via SSO.</p>
+          {/if}
+          <div class="flex" style="gap:8px; margin-top:10px">
+            <button onclick={saveSso} disabled={ssoSaving || !ssoForm.issuer || !ssoForm.client_id}>
+              {sso ? 'Save SSO settings' : 'Enable SSO'}
+            </button>
+            {#if sso}
+              <button class="ghost" data-variant="danger" onclick={disableSso}>Disable SSO</button>
+            {/if}
+          </div>
+        </div>
+      {/if}
+
+      {#if ui.me?.user}
+        <div class="card" style="margin-top:16px">
+          <div class="panel-head"><h2>Your password</h2></div>
+          {#if ui.me.user.has_password}
+            <label data-field>
+              Current password
+              <input type="password" autocomplete="current-password" bind:value={pw.current} />
+            </label>
+          {:else}
+            <p class="hint" style="margin:0 0 8px">Your account is SSO-only. Set a password to also sign in with email.</p>
+          {/if}
+          <div class="row">
+            <label data-field>
+              New password
+              <input type="password" autocomplete="new-password" bind:value={pw.next} />
+            </label>
+            <label data-field>
+              Confirm
+              <input type="password" autocomplete="new-password" bind:value={pw.confirm} />
+            </label>
+          </div>
+          <div style="margin-top:8px">
+            <button class="outline" onclick={changePassword} disabled={pw.next.length < 8 || pw.next !== pw.confirm}>
+              Update password
+            </button>
+          </div>
+        </div>
+      {/if}
 
       <div class="card" style="margin-top:16px">
         <div class="panel-head"><h2>Backup & restore</h2></div>

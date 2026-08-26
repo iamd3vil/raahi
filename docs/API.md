@@ -6,24 +6,52 @@ instance serves it at `/openapi.yaml` and renders an interactive reference at `/
 
 ## Authentication
 
-The API starts with authentication disabled and normally binds to `127.0.0.1:9080`. Generate
-or rotate the admin token with:
+The API is open until either an admin token is generated or a user is created; it normally
+binds to `127.0.0.1:9080`. After that every request must carry one of:
+
+- **Admin token** (automation; acts as `admin`): `Authorization: Bearer $RAAHI_TOKEN` or
+  `X-Admin-Token: $RAAHI_TOKEN`. Generate or rotate it with `POST /api/v1/admin/token`
+  (the plaintext is returned once). Server-sent events also accept `?access_token=...`
+  because browser `EventSource` cannot set headers; prefer a header everywhere else.
+- **Session cookie** (`raahi_session`, HttpOnly, SameSite=Lax, 7 days) issued by
+  `POST /api/v1/auth/login` (`{"email","password"}`) or by OpenID Connect sign-in
+  (`GET /api/v1/auth/sso/start`, a browser navigation). `GET /api/v1/auth/me` reports the
+  caller's identity and role; `POST /api/v1/auth/logout` ends the session.
+
+### Roles
+
+| Role | May |
+|------|-----|
+| `viewer` | `GET` anything (except the user list, SSO settings, and secret exports). |
+| `editor` | Everything a viewer may, plus create/update/delete gateway configuration. |
+| `admin`  | Everything, plus `/users`, `/sso/config`, `/admin/token`, `PUT /settings`, the Cloudflare token, `/import`, and `GET /export?include_secrets=true`. |
+
+Insufficient role returns `403 {"error":"forbidden: requires the editor role"}`.
+
+### Bootstrapping
+
+While the API is open, create the first admin (this immediately requires sign-in):
 
 ```bash
-curl -X POST http://127.0.0.1:9080/api/v1/admin/token
+curl -X POST http://127.0.0.1:9080/api/v1/users -H 'content-type: application/json' \
+  -d '{"email":"you@example.com","name":"You","role":"admin","password":"<at least 8 chars>"}'
 ```
 
-The plaintext token is returned once. After that, send it with either of these headers:
+The last admin cannot be deleted or demoted. Lockout recovery: delete all rows from
+`users` (or clear `settings.admin_token_hash`) in the SQLite database and restart.
 
-```bash
-curl -H "Authorization: Bearer $RAAHI_TOKEN" http://127.0.0.1:9080/api/v1/services
-curl -H "X-Admin-Token: $RAAHI_TOKEN" http://127.0.0.1:9080/api/v1/services
-```
+### Single sign-on
 
-Server-sent events also accept `?access_token=...` because browser `EventSource` cannot set
-headers. Prefer a header for every other request because URLs are commonly logged.
+Admins configure OIDC with `PUT /api/v1/sso/config` (`issuer`, `client_id`,
+`client_secret`, optional `label`, `auto_provision_role`, `allowed_domains`). Register
+`https://<your-admin-host>/api/v1/auth/sso/callback` as the redirect URI at the provider.
+With `auto_provision_role` unset, only pre-created users can sign in through SSO; with it
+set, unknown users whose email domain is in `allowed_domains` are created on first login.
+The redirect URI is derived from `X-Forwarded-Proto`/`X-Forwarded-Host` (or `Host`), so it
+matches whatever hostname the UI is served from.
 
-`/healthz`, `/metrics`, `/openapi.yaml`, `/docs`, and `/api/v1/admin/status` are always open.
+`/healthz`, `/metrics`, `/openapi.yaml`, `/docs`, `/api/v1/admin/status`, and the
+login/SSO endpoints are always open.
 
 ## Create a route
 
@@ -53,7 +81,7 @@ their documented defaults.
 ## Operational details
 
 - Successful creates, updates, and deletes return `200`. Deletes return `{"deleted":true}`.
-- Application errors use `{"error":"message"}` with `400`, `404`, `401`, or `500`.
+- Application errors use `{"error":"message"}` with `400`, `401`, `403`, `404`, `429`, or `500`.
 - Collection endpoints are currently unpaginated. `/requests` alone accepts `limit`, defaulting
   to 100 and capped at 500.
 - Basic/JWT credential secrets, certificate private keys, and WASM bytes are never returned by

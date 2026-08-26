@@ -766,43 +766,6 @@ pub async fn update_settings(
     Ok(Json(settings))
 }
 
-// ---- admin auth ----------------------------------------------------------------
-
-/// SHA-256 hex digest (admin tokens are high-entropy, so a fast hash is fine).
-pub(crate) fn sha256_hex(data: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut h = Sha256::new();
-    h.update(data.as_bytes());
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// Whether admin auth is enabled (used by the UI before login; unauthenticated).
-pub async fn admin_status(State(s): State<AppState>) -> Json<Value> {
-    Json(json!({ "auth_enabled": s.admin_hash.load().is_some() }))
-}
-
-/// Generate (or rotate) the admin token. The plaintext is returned exactly once.
-pub async fn create_admin_token(State(s): State<AppState>) -> ApiResult<Json<Value>> {
-    use rand::RngCore;
-    let mut bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
-    let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    let hash = sha256_hex(&token);
-    s.store.set_admin_token_hash(Some(&hash)).await?;
-    s.admin_hash.store(std::sync::Arc::new(Some(hash)));
-    Ok(Json(json!({
-        "token": token,
-        "note": "Store this token now — it is not retrievable later.",
-    })))
-}
-
-/// Disable admin auth (open the API again; loopback binding still applies).
-pub async fn delete_admin_token(State(s): State<AppState>) -> ApiResult<Json<Value>> {
-    s.store.set_admin_token_hash(None).await?;
-    s.admin_hash.store(std::sync::Arc::new(None));
-    Ok(Json(json!({ "auth_enabled": false })))
-}
-
 // ---- observability -----------------------------------------------------------
 pub async fn metrics(State(s): State<AppState>) -> Json<Value> {
     let snap = s.metrics.snapshot();

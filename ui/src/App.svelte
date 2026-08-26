@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ui, applyTheme, toggleTheme, go, type View } from './lib/state.svelte';
-  import { adminToken, api, setAdminToken } from './lib/api';
+  import { ui, applyTheme, toggleTheme, go, hasRole, toast, type View } from './lib/state.svelte';
+  import { adminToken, api, ApiError, setAdminToken } from './lib/api';
+  import type { AuthStatus } from './lib/types';
   import Dashboard from './pages/Dashboard.svelte';
   import Requests from './pages/Requests.svelte';
   import Routes from './pages/Routes.svelte';
@@ -11,8 +12,9 @@
   import Consumers from './pages/Consumers.svelte';
   import Certificates from './pages/Certificates.svelte';
   import Settings from './pages/Settings.svelte';
+  import Users from './pages/Users.svelte';
 
-  type NavItem = { id: View; label: string; icon: string };
+  type NavItem = { id: View; label: string; icon: string; admin?: boolean };
   const nav: { section: string; items: NavItem[] }[] = [
     {
       section: 'Observe',
@@ -40,6 +42,7 @@
     {
       section: 'System',
       items: [
+        { id: 'users', label: 'Users', icon: 'M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0zM4 21v-2a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v2m3-9v6m3-3h-6', admin: true },
         { id: 'settings', label: 'Settings', icon: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm7-3a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 2h-4l-.4 2.5a7 7 0 0 0-1.7 1l-2.4-1-2 3.4L6 11a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.4 2.5h4l.4-2.5a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6a7 7 0 0 0 .1-1z' },
       ],
     },
@@ -54,33 +57,81 @@
     plugins: { title: 'Plugins', sub: 'Auth, rate limiting, CORS, and header transforms' },
     consumers: { title: 'Consumers', sub: 'Identities that auth plugins authenticate' },
     certificates: { title: 'Certificates', sub: 'TLS certificates served by SNI, hot-reloaded' },
-    settings: { title: 'Settings', sub: 'Listeners, defaults, and configuration export' },
+    users: { title: 'Users', sub: 'Who can sign in, and what they may change' },
+    settings: { title: 'Settings', sub: 'Listeners, defaults, auth, and configuration export' },
   };
 
+  // ---- sign-in ----
+  let status = $state<AuthStatus | null>(null);
+  let email = $state('');
+  let password = $state('');
   let tokenInput = $state('');
+  let useToken = $state(false);
   let loginError = $state('');
+  let loggingIn = $state(false);
+  let menuOpen = $state(false);
 
-  async function login() {
+  async function loginPassword() {
+    loginError = '';
+    loggingIn = true;
+    try {
+      await api.login(email.trim(), password);
+      password = '';
+      location.reload(); // restart live streams with the session cookie attached
+    } catch (e) {
+      loginError = (e as ApiError).message;
+    } finally {
+      loggingIn = false;
+    }
+  }
+
+  async function loginToken() {
     loginError = '';
     setAdminToken(tokenInput.trim());
     try {
-      await api.getSettings(); // any authed call validates the token
-      ui.authRequired = false;
+      await api.me(); // validates the token
       tokenInput = '';
-      location.reload(); // restart live streams with the token attached
+      location.reload();
     } catch {
       setAdminToken(null);
       loginError = 'Invalid token';
     }
   }
 
+  async function signOut() {
+    menuOpen = false;
+    try {
+      if (ui.me?.method === 'session') await api.logout();
+    } catch {
+      /* cookie is cleared server-side regardless */
+    }
+    setAdminToken(null);
+    location.reload();
+  }
+
+  function submitLogin(e: KeyboardEvent) {
+    if (e.key !== 'Enter') return;
+    if (useToken) loginToken();
+    else if (email && password) loginPassword();
+  }
+
   onMount(() => {
     applyTheme();
-    // Show the login screen when auth is on and we don't hold a valid token.
+    // An SSO failure redirects back here with ?sso_error=...; show it on the login card.
+    const params = new URLSearchParams(location.search);
+    const ssoErr = params.get('sso_error');
+    if (ssoErr) {
+      loginError = ssoErr;
+      history.replaceState(null, '', location.pathname + location.hash);
+    }
     api
       .adminStatus()
       .then((s) => {
-        if (s.auth_enabled && !adminToken()) ui.authRequired = true;
+        status = s;
+        useToken = s.token_enabled && !s.users_exist && !s.sso.enabled;
+        // Resolve who we are (in open mode this is an implicit admin); a 401 flips
+        // ui.authRequired via the API client.
+        return api.me().then((p) => (ui.me = p)).catch(() => {});
       })
       .catch(() => {});
     const onHash = () => {
@@ -125,7 +176,7 @@
     <nav>
       {#each nav as group}
         <div class="nav-section">{group.section}</div>
-        {#each group.items as item}
+        {#each group.items.filter((i) => !i.admin || hasRole('admin')) as item}
           <button class="nav-item" class:active={ui.view === item.id} onclick={() => go(item.id)}>
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
               <path d={item.icon} />
@@ -148,6 +199,35 @@
         <h1>{titles[ui.view as View].title}</h1>
         <div class="topbar-sub">{titles[ui.view as View].sub}</div>
       </div>
+      <div class="topbar-right">
+        {#if ui.me}
+          <div class="user-menu">
+            <button class="ghost small user-btn" onclick={() => (menuOpen = !menuOpen)} aria-haspopup="menu" aria-expanded={menuOpen}>
+              <span class="badge" data-variant={ui.me.role === 'admin' ? 'warning' : ui.me.role === 'editor' ? 'info' : undefined}>{ui.me.role}</span>
+              <span class="user-name">{ui.me.user?.name || ui.me.user?.email || (ui.me.method === 'token' ? 'admin token' : 'open access')}</span>
+            </button>
+            {#if menuOpen}
+              <div class="menu" role="menu">
+                {#if ui.me.user}
+                  <div class="menu-head">
+                    <div><strong>{ui.me.user.email}</strong></div>
+                    <div class="faint">{ui.me.role} · signed in with {ui.me.method}</div>
+                  </div>
+                {:else}
+                  <div class="menu-head faint">
+                    {ui.me.method === 'token' ? 'Authenticated with the admin token' : 'No auth configured — everyone is admin'}
+                  </div>
+                {/if}
+                {#if ui.me.user}
+                  <button class="ghost small" role="menuitem" onclick={() => { menuOpen = false; go('settings'); }}>Change password</button>
+                {/if}
+                {#if ui.me.method !== 'open'}
+                  <button class="ghost small" role="menuitem" onclick={signOut}>Sign out</button>
+                {/if}
+              </div>
+            {/if}
+          </div>
+        {/if}
       <button class="ghost small icon" onclick={toggleTheme} aria-label="Toggle theme" title="Toggle theme">
         {#if ui.theme === 'dark'}
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
@@ -160,6 +240,7 @@
           </svg>
         {/if}
       </button>
+      </div>
     </header>
 
     <div class="content">
@@ -180,6 +261,8 @@
           <Consumers />
         {:else if ui.view === 'certificates'}
           <Certificates />
+        {:else if ui.view === 'users'}
+          <Users />
         {:else if ui.view === 'settings'}
           <Settings />
         {/if}
@@ -201,19 +284,39 @@
         </div>
         <div class="brand-name">Raahi</div>
       </div>
-      <h2>Admin token required</h2>
-      <p class="muted">This admin API is protected. Paste your bearer token to continue.</p>
-      <input
-        class="mono"
-        type="password"
-        placeholder="admin token"
-        bind:value={tokenInput}
-        onkeydown={(e) => e.key === 'Enter' && login()}
-      />
-      {#if loginError}<div class="login-err">{loginError}</div>{/if}
-      <button style="width:100%" onclick={login} disabled={!tokenInput.trim()}>
-        Unlock
-      </button>
+      <h2>Sign in</h2>
+
+      {#if status?.sso.enabled && !useToken}
+        <a class="sso-btn" href={api.ssoStartUrl()}>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3" />
+          </svg>
+          Continue with {status.sso.label}
+        </a>
+        {#if status.users_exist}<div class="or"><span>or</span></div>{/if}
+      {/if}
+
+      {#if useToken}
+        <p class="muted">Paste the admin API bearer token.</p>
+        <input class="mono" type="password" placeholder="admin token" bind:value={tokenInput} onkeydown={submitLogin} />
+        {#if loginError}<div class="login-err">{loginError}</div>{/if}
+        <button style="width:100%" onclick={loginToken} disabled={!tokenInput.trim()}>Unlock</button>
+      {:else if status?.users_exist || !status?.sso.enabled}
+        <input type="email" placeholder="email" autocomplete="username" bind:value={email} onkeydown={submitLogin} />
+        <input type="password" placeholder="password" autocomplete="current-password" bind:value={password} onkeydown={submitLogin} />
+        {#if loginError}<div class="login-err">{loginError}</div>{/if}
+        <button style="width:100%" onclick={loginPassword} disabled={loggingIn || !email.trim() || !password}>
+          {#if loggingIn}<span aria-busy="true" data-spinner="small"></span>{:else}Sign in{/if}
+        </button>
+      {:else if loginError}
+        <div class="login-err">{loginError}</div>
+      {/if}
+
+      {#if status?.token_enabled}
+        <button class="ghost small" style="align-self:center" onclick={() => { useToken = !useToken; loginError = ''; }}>
+          {useToken ? 'Sign in with email instead' : 'Use the admin token instead'}
+        </button>
+      {/if}
     </div>
   </div>
 {/if}
@@ -247,6 +350,79 @@
   }
   .login-err {
     color: var(--danger);
+    font-size: 13px;
+  }
+  .sso-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 9px 14px;
+    border-radius: var(--radius-medium);
+    background: var(--primary);
+    color: var(--primary-foreground, #fff);
+    font-weight: 550;
+    font-size: 13.5px;
+    text-decoration: none;
+  }
+  .sso-btn:hover {
+    filter: brightness(1.08);
+  }
+  .or {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--faint-foreground);
+    font-size: 12px;
+  }
+  .or::before,
+  .or::after {
+    content: '';
+    flex: 1;
+    border-top: 1px solid var(--border);
+  }
+  .topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .user-menu {
+    position: relative;
+  }
+  .user-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .user-name {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    min-width: 240px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-medium);
+    box-shadow: var(--shadow-large);
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    z-index: 50;
+  }
+  .menu .ghost {
+    justify-content: flex-start;
+    width: 100%;
+  }
+  .menu-head {
+    padding: 8px 10px 10px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 4px;
     font-size: 13px;
   }
   .shell {

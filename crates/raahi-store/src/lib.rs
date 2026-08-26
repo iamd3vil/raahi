@@ -3,6 +3,7 @@
 
 mod crud;
 mod rows;
+mod users;
 
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -13,6 +14,8 @@ use raahi_core::{CredentialType, ImportDoc, JwtCred, ProxyConfig, RouteSplit, Ta
 use serde::Serialize;
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+
+pub use users::normalize_email;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 

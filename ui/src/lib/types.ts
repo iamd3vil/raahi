@@ -244,3 +244,39 @@ export const PLUGIN_LABELS: Record<PluginType, string> = {
   'request-id': 'Request ID',
   'response-compression': 'Compression',
 };
+
+// ---- admin users, auth, SSO ----
+export type Role = 'viewer' | 'editor' | 'admin';
+export type AuthMethod = 'open' | 'token' | 'session';
+
+export interface User {
+  id: number;
+  email: string;
+  name: string;
+  role: Role;
+  has_password: boolean;
+  created_at: string;
+  last_login_at: string | null;
+}
+
+export interface Principal {
+  role: Role;
+  method: AuthMethod;
+  user: User | null;
+}
+
+export interface AuthStatus {
+  auth_enabled: boolean;
+  token_enabled: boolean;
+  users_exist: boolean;
+  sso: { enabled: boolean; label: string };
+}
+
+export interface SsoConfigView {
+  issuer: string;
+  client_id: string;
+  client_secret_set: boolean;
+  label: string;
+  auto_provision_role: Role | null;
+  allowed_domains: string[];
+}

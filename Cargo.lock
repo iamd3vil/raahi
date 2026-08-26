@@ -2689,6 +2689,7 @@ dependencies = [
  "bcrypt",
  "chrono",
  "futures",
+ "jsonwebtoken",
  "mime_guess",
  "pingora",
  "raahi-acme",
@@ -2696,6 +2697,8 @@ dependencies = [
  "raahi-proxy",
  "raahi-store",
  "rand 0.8.6",
+ "rcgen",
+ "reqwest",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2705,6 +2708,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "url",
 ]
 
 [[package]]

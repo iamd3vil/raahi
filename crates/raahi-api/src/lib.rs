@@ -2,16 +2,17 @@
 //! [`BackgroundService`] so it runs in-process alongside the data plane. Every mutation
 //! writes to SQLite, then rebuilds and hot-swaps the proxy's config snapshot.
 
+mod auth;
 mod error;
 mod handlers;
 mod openapi;
+mod sso;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use axum::Router;
-use axum::response::IntoResponse;
 use axum::routing::get;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
@@ -22,6 +23,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 use tracing::{error, info};
 
+pub use auth::{AuthMethod, AuthState, Principal, required_role};
 pub use error::{ApiError, ApiResult};
 
 /// Shared state for all handlers. Cheap to clone.
@@ -33,9 +35,8 @@ pub struct AppState {
     pub cert_handle: CertHandle,
     pub acme_handle: AcmeHandle,
     pub ui_dir: Option<PathBuf>,
-    /// SHA-256 hex of the admin token; `None` = auth disabled. Swapped live on
-    /// token generate/disable so the middleware never touches the DB.
-    pub admin_hash: Arc<arc_swap::ArcSwap<Option<String>>>,
+    /// Live auth configuration (admin token hash, user presence, SSO settings).
+    pub auth: Arc<AuthState>,
 }
 
 /// Rebuild the config snapshot from the store and atomically swap it into the proxy.
@@ -58,7 +59,7 @@ pub async fn reload_certs(state: &AppState) -> ApiResult<()> {
 }
 
 /// Constant-time-ish equality for two hex digests of equal length.
-fn digest_eq(a: &str, b: &str) -> bool {
+pub(crate) fn digest_eq(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -68,48 +69,14 @@ fn digest_eq(a: &str, b: &str) -> bool {
         == 0
 }
 
-/// Bearer-token auth for the admin API. Accepts `Authorization: Bearer`,
-/// `X-Admin-Token`, or `?access_token=` (the latter for EventSource/SSE, which
-/// cannot set headers). No-op until a token is generated.
-async fn require_admin(
-    axum::extract::State(state): axum::extract::State<AppState>,
-    req: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    let Some(expected) = state.admin_hash.load().as_ref().clone() else {
-        return next.run(req).await; // auth disabled
-    };
-
-    let presented: Option<String> = req
-        .headers()
-        .get("authorization")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|v| {
-            v.strip_prefix("Bearer ")
-                .or_else(|| v.strip_prefix("bearer "))
-        })
-        .map(|s| s.trim().to_string())
-        .or_else(|| {
-            req.headers()
-                .get("x-admin-token")
-                .and_then(|h| h.to_str().ok())
-                .map(|s| s.trim().to_string())
-        })
-        .or_else(|| {
-            req.uri().query().and_then(|q| {
-                q.split('&')
-                    .find_map(|kv| kv.strip_prefix("access_token=").map(|v| v.to_string()))
-            })
-        });
-
-    match presented {
-        Some(token) if digest_eq(&handlers::sha256_hex(&token), &expected) => next.run(req).await,
-        _ => (
-            axum::http::StatusCode::UNAUTHORIZED,
-            axum::Json(serde_json::json!({ "error": "missing or invalid admin token" })),
-        )
-            .into_response(),
-    }
+/// SHA-256 hex digest (admin and session tokens are high-entropy, so a fast hash
+/// is fine).
+pub(crate) fn sha256_hex(data: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(data.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// Assemble the full admin router (API under `/api/v1`, optional SPA static serving).
@@ -201,14 +168,36 @@ pub fn build_router(state: AppState) -> Router {
         .route("/import", axum::routing::post(import_config))
         .route(
             "/admin/token",
-            axum::routing::post(create_admin_token).delete(delete_admin_token),
+            axum::routing::post(auth::create_admin_token).delete(auth::delete_admin_token),
         )
+        // Users, SSO settings (admin role), and the signed-in user's own endpoints.
+        .route("/users", get(auth::list_users).post(auth::create_user))
+        .route(
+            "/users/{id}",
+            axum::routing::put(auth::update_user).delete(auth::delete_user),
+        )
+        .route(
+            "/sso/config",
+            get(auth::get_sso_config)
+                .put(auth::set_sso_config)
+                .delete(auth::delete_sso_config),
+        )
+        .route("/auth/me", get(auth::me))
+        .route(
+            "/auth/me/password",
+            axum::routing::put(auth::change_password),
+        )
+        .route("/auth/logout", axum::routing::post(auth::logout))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            require_admin,
+            auth::guard,
         ))
-        // Status stays open so the UI can tell whether to show the login screen.
-        .route("/admin/status", get(admin_status));
+        // Open endpoints: status (so the UI can show the right login screen),
+        // password login, and the OIDC redirect pair.
+        .route("/admin/status", get(auth::status))
+        .route("/auth/login", axum::routing::post(auth::login))
+        .route("/auth/sso/start", get(sso::start))
+        .route("/auth/sso/callback", get(sso::callback));
 
     let mut app = Router::new()
         .route("/healthz", get(healthz))
@@ -258,12 +247,21 @@ impl BackgroundService for ApiService {
             self.config.store(snap);
         }
 
-        // Load the admin-token hash once; the middleware reads the live handle.
-        let admin_hash = Arc::new(arc_swap::ArcSwap::from_pointee(
+        // Load auth state once; the guard middleware reads the live handles.
+        let auth = Arc::new(AuthState::new(
             store.get_admin_token_hash().await.ok().flatten(),
+            store.count_users().await.unwrap_or(0) > 0,
+            store.get_sso_config().await.ok().flatten(),
         ));
-        if admin_hash.load().is_some() {
-            info!("admin API auth: enabled (bearer token)");
+        if auth.enabled() {
+            info!(
+                "admin API auth: enabled (token: {}, users: {}, sso: {})",
+                auth.admin_hash.load().is_some(),
+                auth.has_users.load(std::sync::atomic::Ordering::Relaxed),
+                auth.sso.load().is_some()
+            );
+        } else {
+            info!("admin API auth: open (no admin token and no users)");
         }
 
         let state = AppState {
@@ -273,7 +271,7 @@ impl BackgroundService for ApiService {
             cert_handle: self.cert_handle.clone(),
             acme_handle: self.acme_handle.clone(),
             ui_dir: self.ui_dir.clone(),
-            admin_hash,
+            auth,
         };
         let app = build_router(state);
 

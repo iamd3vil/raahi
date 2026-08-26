@@ -6,9 +6,14 @@ info:
     Control plane for Raahi's reverse-proxy configuration and runtime state.
 
     All configuration mutations are persisted and hot-reloaded before the response is
-    returned. PUT operations are full replacements, not patches. Authentication is
-    optional until an admin token is generated; when enabled, use either bearer auth or
-    `X-Admin-Token`. Successful creates and deletes return HTTP 200.
+    returned. PUT operations are full replacements, not patches. Successful creates and
+    deletes return HTTP 200.
+
+    Authentication is open until an admin token is generated or a user is created. Then
+    callers authenticate with the admin token (bearer or `X-Admin-Token`, acts as admin)
+    or a `raahi_session` cookie from password or SSO sign-in. Roles: `viewer` may GET,
+    `editor` may mutate gateway configuration, `admin` may also manage users, SSO, the
+    admin token, listener settings, and imports. Insufficient role returns 403.
   license:
     name: MIT
     url: https://opensource.org/license/mit
@@ -19,7 +24,9 @@ tags:
   - name: System
     description: Open liveness, discovery, and Prometheus endpoints.
   - name: Admin authentication
-    description: Admin-token status, generation, rotation, and disablement.
+    description: Auth status, admin token, password/SSO sign-in, and the signed-in user.
+  - name: Users
+    description: Admin-UI users and their roles (admin role required).
   - name: Services
     description: Logical upstreams and their shared transport settings.
   - name: Targets
@@ -47,6 +54,7 @@ tags:
 security:
   - AdminBearer: []
   - AdminTokenHeader: []
+  - SessionCookie: []
 paths:
   /healthz:
     get:
@@ -100,15 +108,193 @@ paths:
         '500': {$ref: '#/components/responses/InternalError'}
     delete:
       tags: [Admin authentication]
-      summary: Disable admin authentication
+      summary: Disable the admin token
+      description: Users (if any) keep protecting the API; with no users the API becomes open again.
       operationId: deleteAdminToken
       responses:
         '200':
-          description: Authentication is disabled.
+          description: Token disabled.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/AdminStatus'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/auth/login:
+    post:
+      tags: [Admin authentication]
+      summary: Sign in with email and password
+      description: Sets the `raahi_session` cookie (HttpOnly, SameSite=Lax, 7 days; Secure when reached over HTTPS). Failed attempts are rate limited per client IP.
+      operationId: login
+      security: []
+      requestBody: {$ref: '#/components/requestBodies/LoginInput'}
+      responses:
+        '200':
+          description: Signed in; the response carries a `Set-Cookie` header.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Principal'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429':
+          description: Too many failed attempts from this client.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/auth/logout:
+    post:
+      tags: [Admin authentication]
+      summary: End the current session
+      operationId: logout
+      responses:
+        '200':
+          description: Session deleted and cookie cleared.
+          content: {application/json: {schema: {type: object, properties: {signed_out: {type: boolean}}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /api/v1/auth/me:
+    get:
+      tags: [Admin authentication]
+      summary: Get the caller's identity and effective role
+      operationId: getMe
+      responses:
+        '200':
+          description: Principal.
+          content: {application/json: {schema: {$ref: '#/components/schemas/Principal'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /api/v1/auth/me/password:
+    put:
+      tags: [Admin authentication]
+      summary: Change the signed-in user's password
+      description: Requires the current password when one is set. SSO-only accounts may set a first password.
+      operationId: changeOwnPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_password]
+              properties:
+                current_password: {type: string}
+                new_password: {type: string, minLength: 8}
+      responses:
+        '200':
+          description: Password updated.
+          content: {application/json: {schema: {type: object, properties: {updated: {type: boolean}}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /api/v1/auth/sso/start:
+    get:
+      tags: [Admin authentication]
+      summary: Begin OpenID Connect sign-in
+      description: Browser navigation target. Redirects to the provider's authorization endpoint (authorization code + PKCE).
+      operationId: ssoStart
+      security: []
+      responses:
+        '303': {description: Redirect to the identity provider.}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/auth/sso/callback:
+    get:
+      tags: [Admin authentication]
+      summary: OpenID Connect redirect URI
+      description: Exchanges the code, verifies the id_token, signs the user in, and redirects to `/`. Failures redirect to `/?sso_error=...`.
+      operationId: ssoCallback
+      security: []
+      parameters:
+        - {name: code, in: query, schema: {type: string}}
+        - {name: state, in: query, schema: {type: string}}
+        - {name: error, in: query, schema: {type: string}}
+        - {name: error_description, in: query, schema: {type: string}}
+      responses:
+        '303': {description: Redirect to the UI, with the session cookie set on success.}
+  /api/v1/users:
+    get:
+      tags: [Users]
+      summary: List users
+      operationId: listUsers
+      responses:
+        '200':
+          description: Users ordered by ID.
+          content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/User'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    post:
+      tags: [Users]
+      summary: Create a user
+      description: A password is required unless SSO is configured (SSO-only account).
+      operationId: createUser
+      requestBody: {$ref: '#/components/requestBodies/UserInput'}
+      responses:
+        '200':
+          description: Created user.
+          content: {application/json: {schema: {$ref: '#/components/schemas/User'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/users/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    put:
+      tags: [Users]
+      summary: Update a user
+      description: Omit `password` to keep the current one; supplying one signs that user out everywhere. The last admin cannot be demoted.
+      operationId: updateUser
+      requestBody: {$ref: '#/components/requestBodies/UserInput'}
+      responses:
+        '200':
+          description: Updated user.
+          content: {application/json: {schema: {$ref: '#/components/schemas/User'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    delete:
+      tags: [Users]
+      summary: Delete a user
+      description: Their sessions end immediately. The last admin cannot be deleted.
+      operationId: deleteUser
+      responses:
+        '200': {$ref: '#/components/responses/Deleted'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/sso/config:
+    get:
+      tags: [Admin authentication]
+      summary: Get SSO settings (secret redacted)
+      operationId: getSsoConfig
+      responses:
+        '200':
+          description: SSO settings.
+          content: {application/json: {schema: {$ref: '#/components/schemas/SsoStatus'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    put:
+      tags: [Admin authentication]
+      summary: Configure OpenID Connect SSO
+      description: Omit `client_secret` to keep the stored one. The issuer must use HTTPS (HTTP is allowed for localhost only).
+      operationId: setSsoConfig
+      requestBody: {$ref: '#/components/requestBodies/SsoConfigInput'}
+      responses:
+        '200':
+          description: Saved settings.
+          content: {application/json: {schema: {$ref: '#/components/schemas/SsoStatus'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    delete:
+      tags: [Admin authentication]
+      summary: Disable SSO
+      operationId: deleteSsoConfig
+      responses:
+        '200':
+          description: SSO disabled.
+          content: {application/json: {schema: {$ref: '#/components/schemas/SsoStatus'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
         '500': {$ref: '#/components/responses/InternalError'}
   /api/v1/services:
     get:
@@ -813,6 +999,11 @@ components:
       in: query
       name: access_token
       description: SSE-only fallback for browser EventSource clients. Prefer headers elsewhere.
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: raahi_session
+      description: Issued by password or SSO sign-in. Carries the user's role.
   parameters:
     Id:
       name: id
@@ -854,6 +1045,22 @@ components:
     CertificateInput:
       required: true
       content: {application/json: {schema: {$ref: '#/components/schemas/CertificateInput'}}}
+    LoginInput:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [email, password]
+            properties:
+              email: {type: string, format: email}
+              password: {type: string}
+    UserInput:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/UserInput'}}}
+    SsoConfigInput:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/SsoConfigInput'}}}
     SettingsInput:
       required: true
       content: {application/json: {schema: {$ref: '#/components/schemas/SettingsInput'}}}
@@ -869,6 +1076,9 @@ components:
       content: {application/json: {schema: {$ref: '#/components/schemas/DeleteResult'}}}
     BadRequest:
       description: Validation, conflict, foreign-key, or malformed-input error.
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    Forbidden:
+      description: Authenticated, but the role is insufficient.
       content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
     Unauthorized:
       description: Admin auth is enabled and the token is missing or invalid.
@@ -918,7 +1128,74 @@ components:
       type: object
       required: [auth_enabled]
       properties:
-        auth_enabled: {type: boolean}
+        auth_enabled: {type: boolean, description: True when an admin token or any user exists.}
+        token_enabled: {type: boolean}
+        users_exist: {type: boolean}
+        sso:
+          type: object
+          properties:
+            enabled: {type: boolean}
+            label: {type: string, example: Google}
+    Role:
+      type: string
+      enum: [viewer, editor, admin]
+    User:
+      type: object
+      required: [id, email, name, role, has_password, created_at, last_login_at]
+      properties:
+        id: {$ref: '#/components/schemas/Id'}
+        email: {type: string, format: email}
+        name: {type: string}
+        role: {$ref: '#/components/schemas/Role'}
+        has_password: {type: boolean, description: False for SSO-only accounts.}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        last_login_at: {allOf: [{$ref: '#/components/schemas/Timestamp'}], nullable: true}
+    UserInput:
+      type: object
+      required: [email, role]
+      properties:
+        email: {type: string, format: email}
+        name: {type: string, default: ''}
+        role: {$ref: '#/components/schemas/Role'}
+        password: {type: string, minLength: 8, writeOnly: true, description: Omit on update to keep the current password.}
+    Principal:
+      type: object
+      required: [role, method, user]
+      properties:
+        role: {$ref: '#/components/schemas/Role'}
+        method: {type: string, enum: [open, token, session]}
+        user: {allOf: [{$ref: '#/components/schemas/User'}], nullable: true}
+    SsoConfigInput:
+      type: object
+      required: [issuer, client_id]
+      properties:
+        issuer: {type: string, format: uri, example: 'https://accounts.google.com'}
+        client_id: {type: string}
+        client_secret: {type: string, writeOnly: true}
+        label: {type: string, description: Sign-in button label.}
+        auto_provision_role:
+          allOf: [{$ref: '#/components/schemas/Role'}]
+          nullable: true
+          description: Create unknown users on first SSO login with this role; null = only pre-created users may sign in.
+        allowed_domains:
+          type: array
+          items: {type: string}
+          description: Email domains eligible for auto-provisioning. Empty = any.
+    SsoStatus:
+      type: object
+      required: [enabled, config]
+      properties:
+        enabled: {type: boolean}
+        config:
+          type: object
+          nullable: true
+          properties:
+            issuer: {type: string}
+            client_id: {type: string}
+            client_secret_set: {type: boolean}
+            label: {type: string}
+            auto_provision_role: {allOf: [{$ref: '#/components/schemas/Role'}], nullable: true}
+            allowed_domains: {type: array, items: {type: string}}
     AdminToken:
       type: object
       required: [token, note]
