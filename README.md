@@ -108,8 +108,10 @@ SQLite and atomically swapped into the running proxy with no restart.
   its assembly with them); nothing Go links into the binary. On most distros:
   `apt install cmake golang perl` / `pacman -S cmake go perl`. Without root,
   `uv tool install cmake` (or `pip install cmake`) provides cmake on `PATH`.
-  If `boring-sys` fails with `'stddef.h' file not found`, libclang can't see the compiler
-  headers: `export BINDGEN_EXTRA_CLANG_ARGS="-I$(cc -print-file-name=include)"`.
+  If `boring-sys` fails with `'stddef.h' file not found`, libclang is installed without
+  its builtin headers. The `just` recipes detect this and set `BINDGEN_EXTRA_CLANG_ARGS`
+  automatically (`just doctor` shows the value); when calling cargo directly, export
+  `BINDGEN_EXTRA_CLANG_ARGS="-I$(cc -print-file-name=include)"` yourself.
 - **Node ≥ 20 + pnpm** (or npm) to build the UI.
 - For `just dist` (static musl binary): **cargo-zigbuild + zig** —
   `uv tool install cargo-zigbuild` (bundles zig via the `ziglang` package; expose it as

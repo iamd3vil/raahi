@@ -7,6 +7,16 @@
 set shell := ["bash", "-cu"]
 set dotenv-load := false
 
+# ── bindgen / libclang headers ──────────────────────────────────────────────
+# boring-sys generates its bindings with libclang. On systems that have libclang
+# but not its builtin headers (e.g. Debian/Ubuntu `libclang1-N` without
+# `libclang-common-N-dev`), every cargo build dies with
+# "fatal error: 'stddef.h' file not found". Detect that once and point libclang at
+# the C compiler's include dir. An explicit BINDGEN_EXTRA_CLANG_ARGS in the
+# environment always wins; when libclang's own headers exist we add nothing.
+bindgen_detected := `if compgen -G '/usr/lib/llvm-*/lib/clang/*/include/stddef.h' >/dev/null || compgen -G '/usr/lib/clang/*/include/stddef.h' >/dev/null || compgen -G '/usr/lib64/clang/*/include/stddef.h' >/dev/null; then echo ""; else inc="$(cc -print-file-name=include 2>/dev/null || true)"; [[ -f "$inc/stddef.h" ]] && echo "-I$inc" || echo ""; fi`
+export BINDGEN_EXTRA_CLANG_ARGS := env("BINDGEN_EXTRA_CLANG_ARGS", bindgen_detected)
+
 # ── variables ────────────────────────────────────────────────────────────────
 ui_dir      := "ui"
 ui_build    := ui_dir + "/build"
@@ -50,6 +60,7 @@ doctor:
     printf "%-12s " "perl:";  perl --version 2>&1 | sed -n 2p || echo "MISSING (needed for boringssl asm)"
     printf "%-12s " "zig:";   zig version 2>&1    || echo "MISSING (needed for 'just dist')"
     printf "%-12s " "zigbuild:"; cargo-zigbuild --version 2>&1 || echo "MISSING (needed for 'just dist': uv tool install cargo-zigbuild)"
+    printf "%-12s %s\n" "bindgen:" "${BINDGEN_EXTRA_CLANG_ARGS:-(libclang headers found; no extra args needed)}"
     printf "%-12s " "cc:";    cc --version 2>&1 | head -1 || echo "MISSING"
     echo ""
     echo "== project =="
@@ -244,8 +255,8 @@ build-musl *args="":
     command -v zig >/dev/null || { echo "✗ zig not on PATH — the uv tool env ships it as 'python -m ziglang'; add a shim or install zig"; exit 1; }
     rustup target add {{musl_target}} >/dev/null 2>&1 || true
     # bindgen parses BoringSSL's headers for the musl target; prefer musl's libc
-    # headers (musl-tools) over glibc's when they are installed. Any
-    # BINDGEN_EXTRA_CLANG_ARGS from the environment (e.g. compiler headers) is kept.
+    # headers (musl-tools) over glibc's when they are installed. The compiler-header
+    # fix is inherited from the justfile-level BINDGEN_EXTRA_CLANG_ARGS.
     if [[ -d /usr/include/x86_64-linux-musl ]]; then
         export BINDGEN_EXTRA_CLANG_ARGS="-I/usr/include/x86_64-linux-musl ${BINDGEN_EXTRA_CLANG_ARGS:-}"
     fi
