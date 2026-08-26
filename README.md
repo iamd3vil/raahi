@@ -102,11 +102,18 @@ SQLite and atomically swapped into the running proxy with no restart.
 ## Prerequisites
 
 - **Rust** ≥ 1.84 (uses edition 2024).
-- **cmake**, a **Go** toolchain, and a C/C++ compiler — required to build Pingora's
+- **cmake**, **Go**, **Perl**, and a C/C++ compiler — required to build Pingora's
   native dependencies (BoringSSL via `boring-sys`, and `libz-ng-sys` for compression).
-  On most distros: `apt install cmake golang` / `pacman -S cmake go`. Without root,
+  Go and Perl are build-time code generators only (BoringSSL generates `err_data.c` and
+  its assembly with them); nothing Go links into the binary. On most distros:
+  `apt install cmake golang perl` / `pacman -S cmake go perl`. Without root,
   `uv tool install cmake` (or `pip install cmake`) provides cmake on `PATH`.
-- **Node ≥ 20 + pnpm** to build the UI.
+  If `boring-sys` fails with `'stddef.h' file not found`, libclang can't see the compiler
+  headers: `export BINDGEN_EXTRA_CLANG_ARGS="-I$(cc -print-file-name=include)"`.
+- **Node ≥ 20 + pnpm** (or npm) to build the UI.
+- For `just dist` (static musl binary): **cargo-zigbuild + zig** —
+  `uv tool install cargo-zigbuild` (bundles zig via the `ziglang` package; expose it as
+  `zig` on `PATH`, e.g. a one-line shim running `python -m ziglang`).
 
 ## Quick start
 
@@ -128,6 +135,18 @@ python3 -m http.server 9001 &
 python3 -m http.server 9002 &
 curl localhost:8080/        # proxied + round-robined to :9001 / :9002
 ```
+
+## Release builds
+
+```bash
+just release   # glibc build → target/release/raahi (dynamically linked to libc/libm)
+just dist      # fully static musl build → dist/raahi-v<version>-x86_64-unknown-linux-musl.tar.gz
+```
+
+`just dist` cross-compiles BoringSSL for musl with zig (`cargo zigbuild`), strips the binary,
+and packages it with the built UI (`ui/build`, the binary's default `--ui-dir`) and this
+README. The result runs on any x86_64 Linux with no shared-library dependencies:
+`tar xzf raahi-v*.tar.gz && cd raahi-v*/ && ./raahi`.
 
 ## Development
 

@@ -11,3 +11,6 @@
 # UI
 /ui/node_modules
 /ui/build
+
+# Distribution tarballs (just dist)
+/dist/

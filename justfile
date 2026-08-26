@@ -1,6 +1,7 @@
 # Raahi — justfile
 # Run `just` to see all recipes, or `just --list` for grouped output.
-# Requires: just, cargo/rustc ≥1.84, pnpm ≥9 (or npm), cmake + Go + C/C++ toolchain
+# Requires: just, cargo/rustc ≥1.84, pnpm ≥9 (or npm), cmake + Go + Perl + C/C++ toolchain
+# For `just dist` (static musl binary): cargo-zigbuild + zig  →  `uv tool install cargo-zigbuild`
 # Docs: https://just.systems  |  Project: https://github.com/…/raahi
 
 set shell := ["bash", "-cu"]
@@ -11,6 +12,11 @@ ui_dir      := "ui"
 ui_build    := ui_dir + "/build"
 bin_debug   := "target/debug/raahi"
 bin_release := "target/release/raahi"
+version     := `grep -m1 '^version' Cargo.toml | cut -d'"' -f2`
+# Static distribution target (BoringSSL is cross-compiled with zig via cargo-zigbuild)
+musl_target := "x86_64-unknown-linux-musl"
+bin_musl    := "target/" + musl_target + "/release/raahi"
+dist_dir    := "dist"
 # pass extra flags via `just build-release -- --features foo`
 cargo_extra := ""
 
@@ -41,6 +47,9 @@ doctor:
     printf "%-12s " "pnpm:";  pnpm --version 2>&1  || echo "MISSING — will fall back to npm"
     printf "%-12s " "cmake:"; cmake --version 2>&1 | head -1 || echo "MISSING (needed for boringssl)"
     printf "%-12s " "go:";    go version 2>&1     || echo "MISSING (needed for boringssl)"
+    printf "%-12s " "perl:";  perl --version 2>&1 | sed -n 2p || echo "MISSING (needed for boringssl asm)"
+    printf "%-12s " "zig:";   zig version 2>&1    || echo "MISSING (needed for 'just dist')"
+    printf "%-12s " "zigbuild:"; cargo-zigbuild --version 2>&1 || echo "MISSING (needed for 'just dist': uv tool install cargo-zigbuild)"
     printf "%-12s " "cc:";    cc --version 2>&1 | head -1 || echo "MISSING"
     echo ""
     echo "== project =="
@@ -205,7 +214,7 @@ dev:
 
 # ── release ────────────────────────────────────────────────────────────────
 
-# Full release: clean UI build + release binary, then verify
+# Full glibc release (dynamically linked): UI build + release binary, then verify. Portable static build: `just dist`
 [group('release')]
 release: ui-build build-release
     @just release-verify
@@ -223,19 +232,52 @@ release-verify:
     {{bin_release}} --help | head -20 | sed 's/^/help   : /'
     echo "✓ release verified"
 
-# Create a tarball of the release binary + UI (for distribution)
+# cargo-zigbuild lets zig cross-compile BoringSSL (C++) for musl; musl-tools
+# alone ships no C++ compiler.
+
+# Build a fully static musl release binary (LTO) → target/x86_64-unknown-linux-musl/release/raahi
 [group('release')]
-package version="0.1.0": build-release
+build-musl *args="":
     #!/usr/bin/env bash
     set -euo pipefail
-    out="raahi-v{{version}}-$(rustc -vV | sed -n 's|host: ||p') .tar.gz"
-    # sanitise filename (e.g. x86_64-unknown-linux-gnu)
-    out=$(echo "$out" | tr -d ' ')
-    echo "→ packaging $out …"
-    tar czf "$out" {{bin_release}} {{ui_build}} README.md --transform 's|target/release/raahi|raahi|' 2>/dev/null || \
-    tar czf "$out" {{bin_release}} {{ui_build}} README.md
-    ls -lh "$out"
-    echo "✓ package → $out"
+    command -v cargo-zigbuild >/dev/null || { echo "✗ cargo-zigbuild not found — install with: uv tool install cargo-zigbuild"; exit 1; }
+    command -v zig >/dev/null || { echo "✗ zig not on PATH — the uv tool env ships it as 'python -m ziglang'; add a shim or install zig"; exit 1; }
+    rustup target add {{musl_target}} >/dev/null 2>&1 || true
+    # bindgen parses BoringSSL's headers for the musl target; prefer musl's libc
+    # headers (musl-tools) over glibc's when they are installed. Any
+    # BINDGEN_EXTRA_CLANG_ARGS from the environment (e.g. compiler headers) is kept.
+    if [[ -d /usr/include/x86_64-linux-musl ]]; then
+        export BINDGEN_EXTRA_CLANG_ARGS="-I/usr/include/x86_64-linux-musl ${BINDGEN_EXTRA_CLANG_ARGS:-}"
+    fi
+    # Noise from the zig toolchain, not from Raahi or BoringSSL:
+    #  - zig's bundled libc++ headers are not marked as system headers, so clang emits
+    #    hundreds of -Wnullability-completeness diagnostics while compiling BoringSSL's C++
+    #    (cc-rs/cmake-rs append the target-specific CXXFLAGS_<target> to the CMake flags);
+    #  - zig's lld warns about rustc's deprecated `-O1` linker flag and about -L dirs that
+    #    boring-sys advertises but the CMake build never creates (GNU ld ignores both).
+    cxx_var="CXXFLAGS_$(echo {{musl_target}} | tr - _)"
+    export "${cxx_var}=${!cxx_var:-} -Wno-nullability-completeness"
+    export RUSTFLAGS="${RUSTFLAGS:-} -Alinker_messages"
+    cargo zigbuild --release --target {{musl_target}} {{cargo_extra}} {{args}}
+    ls -lh {{bin_musl}}
+    file {{bin_musl}} | sed 's/^/file : /'
+
+# Build a distributable: static musl binary (stripped) + UI + README as dist/raahi-v<ver>-<target>.tar.gz
+[group('release')]
+dist: ui-build build-musl
+    #!/usr/bin/env bash
+    set -euo pipefail
+    name="raahi-v{{version}}-{{musl_target}}"
+    out="{{dist_dir}}/$name"
+    rm -rf "$out" && mkdir -p "$out/ui"
+    cp {{bin_musl}} "$out/raahi"
+    strip "$out/raahi"
+    cp -r {{ui_build}} "$out/ui/build"        # matches the binary's default --ui-dir (ui/build)
+    cp README.md "$out/"
+    tar czf "$out.tar.gz" -C {{dist_dir}} "$name"
+    echo "binary : $(file -b "$out/raahi")"
+    ls -lh "$out/raahi" "$out.tar.gz"
+    echo "✓ dist → $out.tar.gz  (run: tar xzf … && cd $name && ./raahi)"
 
 # Strip debug symbols from the release binary (further size reduction)
 [group('release')]
@@ -260,7 +302,7 @@ clean:
 [group('maint')]
 clean-all: clean ui-clean
     rm -f raahi.db raahi.db-shm raahi.db-wal
-    rm -rf .raahi/
+    rm -rf .raahi/ {{dist_dir}}/
     @echo "✓ fully cleaned"
 
 # Update dependencies (Rust + UI)
