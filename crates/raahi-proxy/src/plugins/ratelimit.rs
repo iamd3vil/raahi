@@ -162,6 +162,8 @@ mod tests {
             client_ip: Some("1.2.3.4"),
             headers,
             route_id: 1,
+            service_id: 1,
+            config_generation: 0,
         }
     }
 

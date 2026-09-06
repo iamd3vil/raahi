@@ -262,7 +262,7 @@
     <input class="mono" bind:value={form.health_path} placeholder="/healthz" />
     <span data-hint>
       HTTP GET every 5s per target; healthy = 2xx/3xx, ejected after 2 consecutive failures.
-      Blank = TCP connect check. Plaintext HTTP — leave blank for TLS upstreams.
+      Blank = TCP connect check. HTTPS services use HTTPS with certificate verification and the configured TLS SNI.
     </span>
   </label>
 

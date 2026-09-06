@@ -227,6 +227,8 @@ impl ProxyHttp for RaahiProxy {
                 client_ip: ctx.client_ip.as_deref(),
                 headers: &req.headers,
                 route_id,
+                service_id,
+                config_generation: rc.generation,
             };
 
             let mut effects = Effects::default();
@@ -461,7 +463,10 @@ impl ProxyHttp for RaahiProxy {
         // cache entry (hop-by-hop and content-length excluded — the body may be
         // re-chunked) and mark this response as a miss.
         if ctx.cache_store.is_some() {
-            if upstream_response.status.as_u16() == 200 {
+            if ctx.cache_store.as_ref().unwrap().accepts_response(
+                upstream_response.status.as_u16(),
+                &upstream_response.headers,
+            ) {
                 ctx.cache_headers = upstream_response
                     .headers
                     .iter()
@@ -528,21 +533,24 @@ impl ProxyHttp for RaahiProxy {
         }
 
         if let Some(intent) = &ctx.cache_store {
-            if let Some(b) = body.as_ref() {
-                ctx.cache_buf.extend_from_slice(b);
-            }
-            if ctx.cache_buf.len() as u64 > intent.max_body_bytes {
+            let incoming = body.as_ref().map_or(0, |b| b.len());
+            if ctx.cache_buf.len().saturating_add(incoming) as u64 > intent.max_body_bytes {
                 // Too large to cache: disarm and drop the copy; passthrough unaffected.
                 ctx.cache_store = None;
                 ctx.cache_buf = Vec::new();
-            } else if end_of_stream {
-                let intent = ctx.cache_store.take().unwrap();
-                // Status is always 200 here (non-200s are disarmed in response_filter).
-                intent.store(
-                    200,
-                    std::mem::take(&mut ctx.cache_headers),
-                    std::mem::take(&mut ctx.cache_buf),
-                );
+            } else {
+                if let Some(b) = body.as_ref() {
+                    ctx.cache_buf.extend_from_slice(b);
+                }
+                if end_of_stream {
+                    let intent = ctx.cache_store.take().unwrap();
+                    // Status is always 200 here (non-200s are disarmed in response_filter).
+                    intent.store(
+                        200,
+                        std::mem::take(&mut ctx.cache_headers),
+                        std::mem::take(&mut ctx.cache_buf),
+                    );
+                }
             }
         }
         Ok(None)

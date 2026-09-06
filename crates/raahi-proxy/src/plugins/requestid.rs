@@ -60,6 +60,8 @@ mod tests {
             client_ip: None,
             headers,
             route_id: 1,
+            service_id: 1,
+            config_generation: 0,
         }
     }
 

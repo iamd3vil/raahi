@@ -2730,6 +2730,7 @@ dependencies = [
  "base64",
  "bcrypt",
  "bytes",
+ "futures",
  "http",
  "jsonwebtoken",
  "pingora",

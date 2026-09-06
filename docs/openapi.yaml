@@ -1218,7 +1218,7 @@ components:
         retries: {type: integer, format: int32, minimum: 0, default: 1}
         lb_algorithm: {$ref: '#/components/schemas/LoadBalancingAlgorithm'}
         tls_sni: {type: string, nullable: true, example: upstream.example.com}
-        health_path: {type: string, nullable: true, example: /healthz}
+        health_path: {type: string, nullable: true, example: /healthz, description: "HTTP GET health check path; HTTPS services use verified HTTPS with tls_sni. Blank selects TCP checks."}
     Service:
       allOf:
         - type: object
@@ -1391,11 +1391,17 @@ components:
         key: {type: string, enum: [ip, consumer, route], default: ip}
         headers: {type: boolean, default: true}
     ProxyCacheConfig:
+      description: >-
+        Shared cache for anonymous unconditional GET requests only. Authentication,
+        cookies, range/conditional requests and request cache directives bypass it.
+        Responses with Set-Cookie, Vary, Expires, private, no-cache or no-store are not
+        stored. max-age/s-maxage and Age cap freshness. Cache content has a global
+        64 MiB budget and is invalidated on configuration reload.
       type: object
       properties:
         ttl_secs: {type: integer, format: int64, minimum: 1, default: 60}
         max_body_bytes: {type: integer, format: int64, minimum: 0, default: 1048576}
-        methods: {type: array, items: {type: string}, default: [GET]}
+        methods: {type: array, items: {type: string}, default: [GET], description: "Eligible methods; only GET is currently supported for safe shared caching."}
         cache_key_query: {type: boolean, default: true}
     RequestSizeLimitConfig:
       type: object

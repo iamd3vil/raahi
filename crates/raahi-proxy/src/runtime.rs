@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, RwLock};
 
 use arc_swap::ArcSwap;
 use raahi_core::{Id, LbAlgorithm, Plugin, ProxyConfig, Service};
@@ -19,21 +19,35 @@ pub struct BackendRt {
     pub port: u16,
     pub weight: u32,
     pub healthy: Arc<AtomicBool>,
-    /// Every address `host` resolved to at snapshot build (empty on resolution
-    /// failure). The proxy, the stream splicer, and the health checker all share
-    /// this one view — resolving independently let them disagree (e.g. `localhost`
-    /// as ::1 for the proxy but 127.0.0.1 for a passing health probe).
+    pub addresses: Arc<RwLock<Addresses>>,
+}
+
+#[derive(Default)]
+pub struct Addresses {
     pub addrs: Vec<SocketAddr>,
-    /// Index into `addrs` of the address currently used for connects; the health
-    /// checker moves it to a working address when the current one fails probes.
-    pub active: Arc<AtomicUsize>,
+    pub active: usize,
+}
+
+impl Addresses {
+    pub fn active_addr(&self) -> Option<SocketAddr> {
+        self.addrs
+            .get(self.active)
+            .or_else(|| self.addrs.first())
+            .copied()
+    }
+
+    pub fn refresh(&mut self, addrs: Vec<SocketAddr>) {
+        let previous = self.active_addr();
+        self.active = previous
+            .and_then(|a| addrs.iter().position(|b| *b == a))
+            .unwrap_or(0);
+        self.addrs = addrs;
+    }
 }
 
 impl BackendRt {
-    /// The address connects should use right now.
     pub fn active_addr(&self) -> Option<SocketAddr> {
-        let i = self.active.load(Ordering::Relaxed);
-        self.addrs.get(i).or_else(|| self.addrs.first()).copied()
+        self.addresses.read().unwrap().active_addr()
     }
 
     /// Display/connect string: the active resolved address, falling back to the
@@ -103,7 +117,10 @@ impl ServiceRuntime {
 }
 
 /// The full runtime config snapshot. Swapped wholesale on config change.
+static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
+
 pub struct RuntimeConfig {
+    pub generation: u64,
     pub data: Arc<ProxyConfig>,
     pub services: HashMap<Id, Arc<ServiceRuntime>>,
     /// Stateful plugin instances keyed by plugin id (rate-limit counters, etc.).
@@ -127,9 +144,11 @@ impl RuntimeConfig {
                 .map(|t| {
                     // Carry health (and the elected address, if the target is
                     // unchanged) across reloads so config edits don't reset state.
-                    let carried = prev
-                        .and_then(|p| p.services.get(&sid))
-                        .and_then(|sr| sr.backends.iter().find(|b| b.target_id == t.id));
+                    let carried = prev.and_then(|p| p.services.get(&sid)).and_then(|sr| {
+                        sr.backends
+                            .iter()
+                            .find(|b| b.target_id == t.id && b.host == t.host && b.port == t.port)
+                    });
                     let healthy = carried
                         .map(|b| b.healthy.clone())
                         .unwrap_or_else(|| Arc::new(AtomicBool::new(true)));
@@ -146,13 +165,10 @@ impl RuntimeConfig {
                         }
                     };
                     let active = carried
-                        .filter(|b| b.host == t.host && b.port == t.port)
-                        .map(|b| b.active.clone())
-                        .unwrap_or_default();
-                    // Clamp a carried index that no longer fits the new list.
-                    if active.load(Ordering::Relaxed) >= addrs.len() {
-                        active.store(0, Ordering::Relaxed);
-                    }
+                        .and_then(|b| b.active_addr())
+                        .and_then(|a| addrs.iter().position(|b| *b == a))
+                        .unwrap_or(0);
+                    let addresses = Arc::new(RwLock::new(Addresses { addrs, active }));
 
                     BackendRt {
                         target_id: t.id,
@@ -160,8 +176,7 @@ impl RuntimeConfig {
                         port: t.port,
                         weight: t.weight,
                         healthy,
-                        addrs,
-                        active,
+                        addresses,
                     }
                 })
                 .collect();
@@ -195,6 +210,7 @@ impl RuntimeConfig {
         }
 
         RuntimeConfig {
+            generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
             data: Arc::new(data),
             services,
             plugins,
@@ -235,8 +251,7 @@ mod tests {
             port: 9000,
             weight: 1,
             healthy: Arc::new(AtomicBool::new(true)),
-            addrs,
-            active: Arc::new(AtomicUsize::new(active)),
+            addresses: Arc::new(RwLock::new(Addresses { addrs, active })),
         }
     }
 
@@ -250,8 +265,26 @@ mod tests {
             1,
         );
         assert_eq!(b.addr_string(), "127.0.0.1:2");
-        b.active.store(7, Ordering::Relaxed); // stale index: fall back to first
+        b.addresses.write().unwrap().active = 7; // stale index: fall back to first
         assert_eq!(b.addr_string(), "127.0.0.1:1");
+    }
+
+    #[test]
+    fn dns_refresh_preserves_elected_address_across_reordering() {
+        let a = "127.0.0.1:1".parse().unwrap();
+        let b = "127.0.0.1:2".parse().unwrap();
+        let mut addresses = Addresses {
+            addrs: vec![a, b],
+            active: 1,
+        };
+        addresses.refresh(vec![b, a]);
+        assert_eq!(addresses.active_addr(), Some(b));
+        addresses.refresh(vec![a]);
+        assert_eq!(addresses.active_addr(), Some(a));
+        addresses.refresh(vec![]);
+        assert_eq!(addresses.active_addr(), None);
+        addresses.refresh(vec![b]);
+        assert_eq!(addresses.active_addr(), Some(b));
     }
 
     #[test]
@@ -283,5 +316,6 @@ impl ConfigHandle {
         let prev = self.inner.load();
         let next = RuntimeConfig::build(data, Some(&prev));
         self.inner.store(Arc::new(next));
+        crate::plugins::purge_cache();
     }
 }

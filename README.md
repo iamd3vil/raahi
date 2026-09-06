@@ -45,7 +45,12 @@ SQLite and atomically swapped into the running proxy with no restart.
     from `Accept-Encoding` by Pingora's built-in compression module)
   - `hsts` (`Strict-Transport-Security` on direct HTTPS responses only, with optional
     `includeSubDomains` and `preload` directives)
-  - `proxy-cache` (in-memory TTL response cache with `x-cache` headers and a purge API)
+  - `proxy-cache` (in-memory TTL response cache with `x-cache`/`Age` headers and a purge API).
+    Only anonymous, unconditional GETs are eligible. Cookies, authorization, authenticated
+    consumers, range/conditional requests, and request cache directives bypass it. Responses
+    with `Set-Cookie`, `Vary`, `Expires`, or private/no-cache/no-store directives bypass it;
+    upstream max-age/s-maxage and Age cap freshness. Cache content is limited to 64 MiB
+    across 10,000 entries, isolated by route/service/HTTP-vs-HTTPS, and invalidated on reload.
   - `request-transform` / `response-transform` (add / remove headers) and
     `response-body-transform` (find/replace on text bodies)
   - `http-log` (batched JSON delivery of request records to an external collector,
@@ -67,10 +72,12 @@ SQLite and atomically swapped into the running proxy with no restart.
   certificate reload, **automatic ACME issuance and renewal** via TLS-ALPN-01 or Cloudflare
   DNS-01 (including wildcards), and **upstream TLS**.
 - **Health**: active checks per target (TCP connect, or HTTP GET on a per-service
-  `health_path` with 2xx/3xx = pass) with consecutive-failure thresholds, plus
+  `health_path`, using HTTPS with certificate verification for HTTPS services, with 2xx/3xx = pass)
+  with consecutive-failure thresholds and up to 16 concurrent target probes, plus
   passive circuit breaking — a failed connect ejects the backend immediately.
-  Multi-address hosts (e.g. `localhost` → ::1 + 127.0.0.1) are resolved once per
-  config snapshot; probes try every address and elect the working one, which the
+  Multi-address hosts (e.g. `localhost` → ::1 + 127.0.0.1) are resolved at configuration
+  load and refreshed every 30 seconds (retaining last-known addresses on DNS failure).
+  Probes try every address and elect the working one, which the
   proxy, L4 splicer, and health checks all share (`GET /api/v1/health` shows it).
 - **Declarative config**: `GET /api/v1/export` (optionally with secrets for a restorable
   backup) and `POST /api/v1/import` — a transactional full-replace with id remapping,

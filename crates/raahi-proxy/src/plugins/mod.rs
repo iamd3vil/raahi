@@ -37,6 +37,8 @@ pub struct ReqInput<'a> {
     pub client_ip: Option<&'a str>,
     pub headers: &'a http::HeaderMap,
     pub route_id: Id,
+    pub service_id: Id,
+    pub config_generation: u64,
 }
 
 /// Read-only response inputs handed to plugins during the response phase.
