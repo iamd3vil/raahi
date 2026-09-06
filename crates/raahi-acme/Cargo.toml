@@ -17,7 +17,14 @@ rcgen = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+base64 = "0.22"
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 x509-parser = "0.17"
+
+[dev-dependencies]
+axum = { workspace = true }
+ring = "0.17"
+tempfile = "3"
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }

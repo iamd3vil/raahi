@@ -663,6 +663,15 @@ pub async fn create_certificate(
         }
         raahi_acme::validate_config(&spec.sni, config)
             .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        let directory = raahi_acme::normalize_directory_url(&config.directory_url);
+        if directory == ZEROSSL_DIRECTORY
+            && s.store.get_acme_account(directory).await?.is_none()
+            && s.store.get_acme_eab(directory).await?.is_none()
+        {
+            return Err(ApiError::BadRequest(
+                "Configure ZeroSSL EAB credentials before requesting a certificate".into(),
+            ));
+        }
     } else {
         // Validate the PEM actually parses (cert + private key) before storing.
         raahi_proxy::validate_cert(&spec.cert_pem, &spec.key_pem).map_err(ApiError::BadRequest)?;
@@ -1137,6 +1146,7 @@ pub async fn export_config(
         Some(ImportAcmeState {
             cloudflare_api_token: s.store.get_cloudflare_api_token().await?,
             accounts: s.store.list_acme_accounts().await?,
+            eab_credentials: s.store.list_acme_eab().await?,
         })
     } else {
         None
@@ -1159,7 +1169,7 @@ pub async fn export_config(
 /// Declarative import: full replace of the routing config from an export document.
 pub async fn import_config(
     State(s): State<AppState>,
-    Json(doc): Json<ImportDoc>,
+    Json(mut doc): Json<ImportDoc>,
 ) -> ApiResult<Json<Value>> {
     // Validate wasm modules and certificates *before* the destructive import.
     use base64::Engine;
@@ -1172,6 +1182,17 @@ pub async fn import_config(
         }
     }
     for cv in &doc.certificates {
+        if let Some(config) = cv.get("acme_config").filter(|v| !v.is_null()) {
+            let config: AcmeConfig = serde_json::from_value(config.clone()).map_err(|_| {
+                ApiError::BadRequest("Invalid ACME configuration in certificate import".into())
+            })?;
+            let domains: Vec<String> = serde_json::from_value(cv["sni"].clone()).map_err(|_| {
+                ApiError::BadRequest("Invalid ACME domains in certificate import".into())
+            })?;
+            raahi_acme::validate_config(&domains, &config)
+                .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+        }
+
         let (cert, key) = (
             cv["cert_pem"].as_str().unwrap_or(""),
             cv["key_pem"].as_str().unwrap_or(""),
@@ -1185,7 +1206,12 @@ pub async fn import_config(
             })?;
         }
     }
-    if let Some(acme) = &doc.acme {
+    if let Some(acme) = &mut doc.acme {
+        for credentials in &mut acme.eab_credentials {
+            *credentials = raahi_acme::normalize_eab_credentials(credentials)
+                .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+        }
+
         for account in &acme.accounts {
             raahi_acme::validate_account_credentials(&account.credentials).map_err(|error| {
                 ApiError::BadRequest(format!(

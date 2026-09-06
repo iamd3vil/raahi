@@ -53,6 +53,63 @@ matches whatever hostname the UI is served from.
 `/healthz`, `/metrics`, `/openapi.yaml`, `/docs`, `/api/v1/admin/status`, and the
 login/SSO endpoints are always open.
 
+## ACME providers and registration
+
+The certificate `acme_config.directory_url` defaults to Let's Encrypt production.
+It accepts `production`/`letsencrypt`, `staging`/`letsencrypt-staging`, `zerossl`, or
+a custom HTTPS directory URL. Existing certificate configurations remain valid.
+
+ZeroSSL uses `https://acme.zerossl.com/v2/DV90` and requires EAB credentials for initial
+account registration. Raahi currently uses DNS-01 (Cloudflare) with ZeroSSL. Let’s
+Encrypt and custom providers can use DNS-01 or TLS-ALPN-01 if offered by the CA.
+
+An admin saves EAB credentials using `PUT /api/v1/acme/eab`:
+
+```json
+{
+  "directory_url": "zerossl",
+  "key_id": "<EAB key ID from the CA>",
+  "hmac_key": "<base64url-encoded EAB HMAC key>"
+}
+```
+
+`GET /api/v1/acme/eab?directory_url=zerossl` returns only `configured` and
+`account_registered` booleans. `DELETE` on the same URL removes registration
+credentials (admin only). It does not delete an existing account. One registered
+account is reused per directory; changing EAB credentials does not change its identity.
+
+EAB credentials are stored separately from certificates and are excluded from ordinary
+API responses and exports. Secret exports include them in `acme.eab_credentials`,
+and import restores them. Backups without this new field remain accepted.
+
+## Add an application
+
+`POST /api/v1/applications` (editor/admin) creates the service, target, domain route,
+and optional policy plugins in one transaction, then hot-reloads once:
+
+```json
+{
+  "name": "Photos",
+  "domain": "photos.example.com",
+  "upstream_url": "http://127.0.0.1:3000",
+  "https": true,
+  "hsts": false,
+  "allowed_cidrs": ["100.64.0.0/10"]
+}
+```
+
+HTTPS requires an issued certificate matching the domain and an enabled HTTPS listener.
+The redirect uses 308 and preserves paths and queries. The route preserves the incoming
+Host header and forwards every path. Empty `allowed_cidrs` adds no IP restriction;
+existing global policies still apply. Duplicate service names and exact domain routes
+are rejected without leaving partial resources. Wildcard/catch-all routes at priority
+100 or higher that overlap the domain must be adjusted first. DNS records are not created.
+
+`POST /api/v1/applications/test-upstream` with `{"upstream_url":"http://127.0.0.1:3000"}`
+sends a GET from Raahi with a five-second timeout and returns `reachable`, `status`,
+`latency_ms`, and `message`. It follows no redirects and treats any HTTP response,
+including 401 or 404, as reachable. It requires editor/admin and writes no configuration.
+
 ## Create a route
 
 Create a service, add at least one target, then attach a route to the service:

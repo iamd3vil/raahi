@@ -3,6 +3,7 @@
 import type { Principal, Role } from './types';
 
 export type View =
+  | 'add-application'
   | 'dashboard'
   | 'requests'
   | 'routes'
@@ -62,3 +63,9 @@ export function toast(msg: string, kind: 'info' | 'ok' | 'err' = 'info') {
   const variant = kind === 'ok' ? 'success' : kind === 'err' ? 'danger' : 'info';
   window.ot.toast(msg, undefined, { variant, placement: 'bottom-right' });
 }
+
+// Keep an unfinished application while visiting Certificates or Settings.
+export const applicationDraft = $state({
+  name: '', domain: '', upstream_url: '', https: true, hsts: false,
+  access: 'public', networks: '',
+});

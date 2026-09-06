@@ -18,6 +18,11 @@ SQLite and atomically swapped into the running proxy with no restart.
 
 ## Features
 
+- **Add application**: a two-step setup/review flow creates a service, target, domain
+  route, and optional HTTPS redirect, HSTS, and IP allowlist together. Test upstream
+  connectivity before saving. HTTPS reuses an existing matching certificate; drafts
+  survive visiting Certificates or Settings. Creation is transactional and reloads once.
+
 - **Routing** by host (exact + `*.wildcard`), path prefix (longest-match) or
   **`~`-prefixed regex paths** (anchored at the path start; `strip_path` strips the
   matched portion), method, and **header conditions** (exact value or presence),
@@ -70,7 +75,8 @@ SQLite and atomically swapped into the running proxy with no restart.
   the `users` table / clear `settings.admin_token_hash` in SQLite and restart.
 - **TLS termination** via boringssl with per-SNI certificate selection and live (no-restart)
   certificate reload, **automatic ACME issuance and renewal** via TLS-ALPN-01 or Cloudflare
-  DNS-01 (including wildcards), and **upstream TLS**.
+  DNS-01 (including wildcards), and **upstream TLS**. Choose Let’s Encrypt (default),
+  ZeroSSL (with EAB registration), or a custom ACME provider in the certificate form.
 - **Health**: active checks per target (TCP connect, or HTTP GET on a per-service
   `health_path`, using HTTPS with certificate verification for HTTPS services, with 2xx/3xx = pass)
   with consecutive-failure thresholds and up to 16 concurrent target probes, plus
@@ -210,9 +216,13 @@ Manage certificates in the UI — upload PEM material or create an ACME-managed 
 replace/remove it, or change the default. The running HTTPS listener picks changes up **live,
 with no restart**, including the first certificate issued after startup.
 
-ACME supports Let's Encrypt production/staging or a custom HTTPS directory. TLS-ALPN-01
+ACME supports Let's Encrypt production/staging (the default), ZeroSSL, or a custom HTTPS directory. TLS-ALPN-01
 requires the requested domains to resolve to Raahi with public port 443 reachable. DNS-01
-uses a Cloudflare API token and is required for wildcard names. The background service issues
+uses a Cloudflare API token and is required for wildcard names. ZeroSSL uses DNS-01
+in Raahi and requires an EAB key ID and base64url HMAC key from its Developer dashboard
+for initial registration. Admins can save these in the certificate form; registered
+accounts are reused per directory. EAB credentials stay out of certificate responses
+and are included only in explicit secret exports. The background service issues
 missing certificates immediately, retries failures, scans every six hours, and renews within
 30 days of expiry. ACME account credentials, Cloudflare tokens, and certificate private keys
 stay in SQLite and memory, are never logged or returned by ordinary APIs, and are included only

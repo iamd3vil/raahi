@@ -9,7 +9,7 @@ use crate::rows::*;
 use crate::{Store, StoreError};
 
 /// Map insert/update DB errors to friendlier store errors.
-fn map_err(e: sqlx::Error) -> StoreError {
+pub(crate) fn map_err(e: sqlx::Error) -> StoreError {
     if let Some(db) = e.as_database_error() {
         if db.is_unique_violation() {
             return StoreError::Conflict(db.message().to_string());

@@ -280,3 +280,26 @@ export interface SsoConfigView {
   auto_provision_role: Role | null;
   allowed_domains: string[];
 }
+
+export interface ApplicationSpec {
+  name: string;
+  domain: string;
+  upstream_url: string;
+  https: boolean;
+  hsts: boolean;
+  allowed_cidrs: string[];
+}
+export interface ApplicationCreated {
+  name: string;
+  url: string;
+  service_id: number;
+  target_id: number;
+  route_id: number;
+  plugin_ids: number[];
+}
+export interface UpstreamProbe {
+  reachable: boolean;
+  status: number | null;
+  latency_ms: number;
+  message: string;
+}

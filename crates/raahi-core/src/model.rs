@@ -385,6 +385,26 @@ pub struct AcmeConfig {
     pub email: Option<String>,
 }
 
+pub const ZEROSSL_DIRECTORY: &str = "https://acme.zerossl.com/v2/DV90";
+
+/// Registration secrets. Serialized only in explicitly requested secret backups.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcmeEabCredentials {
+    pub directory_url: String,
+    pub key_id: String,
+    pub hmac_key: String,
+}
+
+impl std::fmt::Debug for AcmeEabCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AcmeEabCredentials")
+            .field("directory_url", &self.directory_url)
+            .field("credentials", &"[redacted]")
+            .finish()
+    }
+}
+
 fn default_acme_directory() -> String {
     LETS_ENCRYPT_PRODUCTION.to_string()
 }

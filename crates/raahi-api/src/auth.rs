@@ -191,6 +191,7 @@ pub fn required_role(method: &Method, path: &str, query: Option<&str>) -> Role {
         || p.starts_with("/sso/")
         || p == "/settings"
         || p == "/acme/cloudflare-token"
+        || p == "/acme/eab"
         || p == "/import";
     if admin_only && (!is_read || p.starts_with("/users") || p.starts_with("/sso/")) {
         return Role::Admin;
@@ -641,6 +642,26 @@ mod tests {
 
     #[test]
     fn role_matrix() {
+        assert_eq!(
+            required_role(&Method::POST, "/api/v1/applications", None),
+            Role::Editor
+        );
+        assert_eq!(
+            required_role(&Method::POST, "/api/v1/applications/test-upstream", None),
+            Role::Editor
+        );
+        assert_eq!(
+            required_role(&Method::PUT, "/api/v1/acme/eab", None),
+            Role::Admin
+        );
+        assert_eq!(
+            required_role(&Method::DELETE, "/api/v1/acme/eab", None),
+            Role::Admin
+        );
+        assert_eq!(
+            required_role(&Method::GET, "/api/v1/acme/eab", None),
+            Role::Viewer
+        );
         let get = Method::GET;
         let post = Method::POST;
         let put = Method::PUT;

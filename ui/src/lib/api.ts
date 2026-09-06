@@ -2,6 +2,9 @@
 // hot-swap the proxy config, so callers just re-fetch after a change.
 
 import type {
+  ApplicationSpec,
+  ApplicationCreated,
+  UpstreamProbe,
   Certificate,
   ConfigSummary,
   Consumer,
@@ -77,6 +80,8 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 }
 
 export const api = {
+  createApplication: (spec: ApplicationSpec) => req<ApplicationCreated>('POST', '/applications', spec),
+  testUpstream: (upstream_url: string) => req<UpstreamProbe>('POST', '/applications/test-upstream', { upstream_url }),
   // services
   listServices: () => req<Service[]>('GET', '/services'),
   createService: (s: Partial<Service>) => req<Service>('POST', '/services', s),
@@ -123,6 +128,14 @@ export const api = {
     c: { type: string; identifier: string; secret?: string; algorithm?: string },
   ) => req<Credential>('POST', `/consumers/${consumerId}/credentials`, c),
   deleteCredential: (id: number) => req('DELETE', `/credentials/${id}`),
+
+  // ACME account registration (EAB values are write-only)
+  getAcmeAccountStatus: (directory_url: string) =>
+    req<{ configured: boolean; account_registered: boolean }>('GET', `/acme/eab?directory_url=${encodeURIComponent(directory_url)}`),
+  setAcmeEab: (credentials: { directory_url: string; key_id: string; hmac_key: string }) =>
+    req<{ configured: boolean }>('PUT', '/acme/eab', credentials),
+  deleteAcmeEab: (directory_url: string) =>
+    req<{ configured: boolean }>('DELETE', `/acme/eab?directory_url=${encodeURIComponent(directory_url)}`),
 
   // certificates
   listCertificates: () => req<Certificate[]>('GET', '/certificates'),

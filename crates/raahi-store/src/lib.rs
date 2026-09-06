@@ -1,6 +1,8 @@
 //! Raahi config store: SQLite persistence (via sqlx) and compilation of the in-memory
 //! [`ProxyConfig`] snapshot the data plane reads.
 
+mod acme_eab;
+mod applications;
 mod crud;
 mod rows;
 mod users;
@@ -130,6 +132,7 @@ impl Store {
             "services",
             "certificates",
             "acme_accounts",
+            "acme_eab",
             "wasm_modules",
         ] {
             sqlx::query(&format!("DELETE FROM {table}"))
@@ -412,6 +415,17 @@ impl Store {
         }
 
         if let Some(acme) = &doc.acme {
+            for eab in &acme.eab_credentials {
+                sqlx::query(
+                    "INSERT INTO acme_eab (directory_url, key_id, hmac_key) VALUES (?,?,?)",
+                )
+                .bind(&eab.directory_url)
+                .bind(&eab.key_id)
+                .bind(&eab.hmac_key)
+                .execute(&mut *tx)
+                .await?;
+            }
+
             sqlx::query("UPDATE settings SET cloudflare_api_token=? WHERE id=1")
                 .bind(&acme.cloudflare_api_token)
                 .execute(&mut *tx)

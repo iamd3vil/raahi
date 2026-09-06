@@ -18,3 +18,6 @@ pub use users::{Role, SsoConfig, User, UserSpec};
 /// Database row id type used across all entities.
 pub type Id = i64;
 pub use acme::{AlpnChallengeCertificate, AlpnChallengeRegistry};
+
+mod application;
+pub use application::*;

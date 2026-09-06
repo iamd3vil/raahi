@@ -293,3 +293,174 @@ async fn users_sessions_and_sso_config() {
     store.set_sso_config(None).await.unwrap();
     assert!(store.get_sso_config().await.unwrap().is_none());
 }
+
+fn application(name: &str, domain: &str) -> ApplicationSpec {
+    ApplicationSpec {
+        name: name.into(),
+        domain: domain.into(),
+        upstream_url: "http://127.0.0.1:3000".into(),
+        https: false,
+        hsts: false,
+        allowed_cidrs: vec![],
+    }
+}
+
+#[tokio::test]
+async fn application_creates_complete_routing_configuration() {
+    let store = Store::connect(&tmp_db()).await.unwrap();
+    store
+        .create_certificate(&CertificateSpec {
+            name: "wildcard".into(),
+            sni: vec!["*.example.com".into()],
+            cert_pem: "certificate material".into(),
+            key_pem: "key material".into(),
+            acme_config: None,
+        })
+        .await
+        .unwrap();
+    let mut spec = application(" Photos ", "PHOTOS.example.com.");
+    spec.https = true;
+    spec.hsts = true;
+    spec.allowed_cidrs = vec!["100.64.0.0/10".into()];
+    let created = store.create_application(&spec).await.unwrap();
+    assert_eq!(created.name, "Photos");
+    assert_eq!(created.url, "https://photos.example.com");
+    let route = store.get_route(created.route_id).await.unwrap().unwrap();
+    assert_eq!(route.service_id, created.service_id);
+    assert_eq!(route.hosts, vec!["photos.example.com"]);
+    assert!(route.preserve_host && !route.strip_path && route.enabled);
+    assert_eq!(
+        store.list_targets_for(created.service_id).await.unwrap()[0].id,
+        created.target_id
+    );
+    let plugins = store.list_plugins().await.unwrap();
+    assert_eq!(plugins.len(), 3);
+    assert!(plugins.iter().all(|p| p.route_id == Some(created.route_id)));
+    assert!(plugins.iter().any(|p| p.plugin_type == PluginType::Redirect
+        && p.config["http_only"] == true
+        && p.config["status"] == 308));
+    assert!(
+        plugins
+            .iter()
+            .any(|p| p.plugin_type == PluginType::IpRestriction
+                && p.config["allow"][0] == "100.64.0.0/10")
+    );
+    let snapshot = store.build_snapshot().await.unwrap();
+    assert_eq!(snapshot.routes.len(), 1);
+    assert_eq!(snapshot.services.len(), 1);
+}
+
+#[tokio::test]
+async fn application_rolls_back_all_resources_on_late_failure() {
+    let store = Store::connect(&tmp_db()).await.unwrap();
+    sqlx::query("CREATE TRIGGER reject_application_plugin BEFORE INSERT ON plugins BEGIN SELECT RAISE(ABORT, 'test failure'); END").execute(store.pool()).await.unwrap();
+    let mut spec = application("app", "app.example.com");
+    spec.allowed_cidrs = vec!["127.0.0.1".into()];
+    assert!(store.create_application(&spec).await.is_err());
+    assert!(store.list_services().await.unwrap().is_empty());
+    assert!(store.list_all_targets().await.unwrap().is_empty());
+    assert!(store.list_routes().await.unwrap().is_empty());
+    assert!(store.list_plugins().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn application_requires_certificates_and_rejects_duplicate_domains() {
+    let store = Store::connect(&tmp_db()).await.unwrap();
+    let mut spec = application("app", "app.example.com");
+    spec.https = true;
+    assert!(matches!(
+        store.create_application(&spec).await,
+        Err(raahi_store::StoreError::Invalid(_))
+    ));
+    assert!(store.list_services().await.unwrap().is_empty());
+    spec.https = false;
+    store.create_application(&spec).await.unwrap();
+    spec.name = "another".into();
+    assert!(matches!(
+        store.create_application(&spec).await,
+        Err(raahi_store::StoreError::Conflict(_))
+    ));
+    assert_eq!(store.list_services().await.unwrap().len(), 1);
+    assert_eq!(store.list_routes().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn concurrent_application_submissions_cannot_duplicate_a_domain() {
+    let store = Store::connect(&tmp_db()).await.unwrap();
+    let first = application("first", "app.example.com");
+    let second = application("second", "app.example.com");
+    let (a, b) = tokio::join!(
+        store.create_application(&first),
+        store.create_application(&second)
+    );
+    assert_ne!(a.is_ok(), b.is_ok());
+    assert_eq!(store.list_services().await.unwrap().len(), 1);
+    assert_eq!(store.list_routes().await.unwrap().len(), 1);
+    assert_eq!(store.list_all_targets().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn application_rejects_higher_priority_wildcard_routes() {
+    let store = Store::connect(&tmp_db()).await.unwrap();
+    let existing = store
+        .create_application(&application("first", "first.example.com"))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE routes SET hosts='[\"*.example.com\"]', priority=200 WHERE id=?")
+        .bind(existing.route_id)
+        .execute(store.pool())
+        .await
+        .unwrap();
+    let error = store
+        .create_application(&application("second", "second.example.com"))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, raahi_store::StoreError::Conflict(_)));
+    assert_eq!(store.list_services().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn eab_secrets_are_scoped_by_directory_and_survive_backup_restore() {
+    let store = Store::connect(&tmp_db()).await.unwrap();
+    let secret = AcmeEabCredentials {
+        directory_url: ZEROSSL_DIRECTORY.into(),
+        key_id: "kid".into(),
+        hmac_key: "c2VjcmV0".into(),
+    };
+    store.set_acme_eab(&secret).await.unwrap();
+    assert!(
+        store
+            .get_acme_eab(LETS_ENCRYPT_PRODUCTION)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let backup = serde_json::json!({"raahi_export_version":1,"acme":{"eab_credentials":store.list_acme_eab().await.unwrap()}});
+    store.delete_acme_eab(ZEROSSL_DIRECTORY).await.unwrap();
+    assert!(
+        store
+            .get_acme_eab(ZEROSSL_DIRECTORY)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    store
+        .import(&serde_json::from_value(backup).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .get_acme_eab(ZEROSSL_DIRECTORY)
+            .await
+            .unwrap()
+            .unwrap()
+            .hmac_key,
+        "c2VjcmV0"
+    );
+    let old_backup: ImportDoc = serde_json::from_value(
+        serde_json::json!({"raahi_export_version":1,"acme":{"accounts":[]}}),
+    )
+    .unwrap();
+    store.import(&old_backup).await.unwrap();
+    assert!(store.list_acme_eab().await.unwrap().is_empty());
+}

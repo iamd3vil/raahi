@@ -198,6 +198,8 @@ pub struct ImportDoc {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportAcmeState {
     #[serde(default)]
+    pub eab_credentials: Vec<AcmeEabCredentials>,
+    #[serde(default)]
     pub cloudflare_api_token: Option<String>,
     #[serde(default)]
     pub accounts: Vec<ImportAcmeAccount>,

@@ -2,6 +2,8 @@
 //! [`BackgroundService`] so it runs in-process alongside the data plane. Every mutation
 //! writes to SQLite, then rebuilds and hot-swaps the proxy's config snapshot.
 
+mod acme_accounts;
+mod applications;
 mod auth;
 mod error;
 mod handlers;
@@ -84,6 +86,17 @@ pub fn build_router(state: AppState) -> Router {
     use handlers::*;
 
     let api = Router::new()
+        .route(
+            "/acme/eab",
+            get(acme_accounts::status)
+                .put(acme_accounts::save)
+                .delete(acme_accounts::remove),
+        )
+        .route("/applications", axum::routing::post(applications::create))
+        .route(
+            "/applications/test-upstream",
+            axum::routing::post(applications::test_upstream),
+        )
         .route("/services", get(list_services).post(create_service))
         .route(
             "/services/{id}",

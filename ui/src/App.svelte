@@ -3,6 +3,7 @@
   import { ui, applyTheme, toggleTheme, go, hasRole, toast, type View } from './lib/state.svelte';
   import { adminToken, api, ApiError, setAdminToken } from './lib/api';
   import type { AuthStatus } from './lib/types';
+  import AddApplication from './pages/AddApplication.svelte';
   import Dashboard from './pages/Dashboard.svelte';
   import Requests from './pages/Requests.svelte';
   import Routes from './pages/Routes.svelte';
@@ -49,6 +50,7 @@
   ];
 
   const titles: Record<View, { title: string; sub: string }> = {
+    'add-application': { title: 'Add application', sub: 'Connect an application to your domain' },
     dashboard: { title: 'Dashboard', sub: 'Live traffic, latency, and topology at a glance' },
     requests: { title: 'Requests', sub: 'Recent requests through the proxy, live-tailed' },
     routes: { title: 'Routes', sub: 'Match requests by host, path, and method' },
@@ -200,6 +202,9 @@
         <div class="topbar-sub">{titles[ui.view as View].sub}</div>
       </div>
       <div class="topbar-right">
+        {#if hasRole('editor') && ui.view !== 'add-application'}
+          <button class="outline small" onclick={() => go('add-application')}>+ Add application</button>
+        {/if}
         {#if ui.me}
           <div class="user-menu">
             <button class="ghost small user-btn" onclick={() => (menuOpen = !menuOpen)} aria-haspopup="menu" aria-expanded={menuOpen}>
@@ -245,7 +250,9 @@
 
     <div class="content">
       <div class="page">
-        {#if ui.view === 'dashboard'}
+        {#if ui.view === 'add-application'}
+          <AddApplication />
+        {:else if ui.view === 'dashboard'}
           <Dashboard />
         {:else if ui.view === 'requests'}
           <Requests />
@@ -554,6 +561,9 @@
     margin: 0 auto;
   }
   @media (max-width: 760px) {
+    .topbar { flex-wrap: wrap; padding: 14px 16px; }
+    .topbar > div:first-child { flex: 1 1 180px; }
+    .topbar-right { flex-wrap: wrap; }
     .shell {
       grid-template-columns: 60px 1fr;
     }

@@ -21,6 +21,8 @@ servers:
   - url: /
     description: The Raahi admin listener serving this contract
 tags:
+  - name: Applications
+    description: Create an application and its gateway resources together.
   - name: System
     description: Open liveness, discovery, and Prometheus endpoints.
   - name: Admin authentication
@@ -56,6 +58,98 @@ security:
   - AdminTokenHeader: []
   - SessionCookie: []
 paths:
+  /api/v1/acme/eab:
+    get:
+      tags: [Certificates]
+      operationId: getAcmeAccountRegistrationStatus
+      summary: Get EAB and account registration status
+      description: Returns only booleans. Credentials are never returned by this endpoint.
+      parameters:
+        - {name: directory_url, in: query, required: true, schema: {type: string}, description: ACME directory URL or provider alias.}
+      responses:
+        '200':
+          description: Registration status for this directory.
+          content: {application/json: {schema: {$ref: '#/components/schemas/AcmeAccountStatus'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+    put:
+      tags: [Certificates]
+      operationId: setAcmeEabCredentials
+      summary: Save external account binding credentials
+      description: Requires admin. Credentials are scoped to the normalized ACME directory and used only to register a new account. Existing accounts are reused.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/AcmeEabCredentials'}}}
+      responses:
+        '200':
+          description: Credentials saved.
+          content: {application/json: {schema: {type: object, properties: {configured: {type: boolean}}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+    delete:
+      tags: [Certificates]
+      operationId: deleteAcmeEabCredentials
+      summary: Remove saved EAB credentials
+      description: Requires admin. Does not delete an existing registered ACME account or prevent its renewal.
+      parameters:
+        - {name: directory_url, in: query, required: true, schema: {type: string}, description: ACME directory URL or provider alias.}
+      responses:
+        '200':
+          description: Credentials removed.
+          content: {application/json: {schema: {type: object, properties: {configured: {type: boolean}}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /api/v1/applications:
+    post:
+      tags: [Applications]
+      operationId: createApplication
+      summary: Add an application atomically
+      description: >-
+        Requires editor or admin. Creates a service, one target, a domain route,
+        and optional HTTPS redirect, HSTS and IP restriction plugins in one transaction.
+        Exact domain conflicts are rejected. HTTPS requires an enabled listener and an
+        issued matching certificate. Existing global policies still apply. DNS is not changed.
+        The completed configuration is hot-reloaded once.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/ApplicationSpec'}}}
+      responses:
+        '200':
+          description: Application created.
+          content: {application/json: {schema: {$ref: '#/components/schemas/ApplicationCreated'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/applications/test-upstream:
+    post:
+      tags: [Applications]
+      operationId: testApplicationUpstream
+      summary: Test an upstream origin from Raahi
+      description: >-
+        Requires editor or admin. Sends one GET with a five-second timeout, verified
+        upstream TLS, no environment proxies, and no redirect following. Any HTTP status
+        counts as reachable. Does not write configuration or consume the response body.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [upstream_url]
+              properties:
+                upstream_url: {type: string, example: 'http://127.0.0.1:3000'}
+      responses:
+        '200':
+          description: Connectivity result, including failures.
+          content: {application/json: {schema: {$ref: '#/components/schemas/UpstreamProbe'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
   /healthz:
     get:
       tags: [System]
@@ -1090,6 +1184,35 @@ components:
       description: Internal storage or server error.
       content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
   schemas:
+    ApplicationSpec:
+      type: object
+      additionalProperties: false
+      required: [name, domain, upstream_url]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 100, example: Photos}
+        domain: {type: string, example: photos.example.com, description: Exact DNS hostname, without scheme, path, port or wildcard.}
+        upstream_url: {type: string, example: 'http://127.0.0.1:3000', description: HTTP or HTTPS origin without credentials, a path other than slash, query or fragment. IPv6 is supported.}
+        https: {type: boolean, default: false, description: Redirect HTTP to HTTPS with status 308. Requires an existing matching certificate and HTTPS listener.}
+        hsts: {type: boolean, default: false, description: Enable HSTS for one year without subdomains or preload. Requires https.}
+        allowed_cidrs: {type: array, maxItems: 100, items: {type: string}, default: [], description: Allow only these client IPs or CIDRs. Empty means no additional IP restriction.}
+    ApplicationCreated:
+      type: object
+      required: [name, url, service_id, target_id, route_id, plugin_ids]
+      properties:
+        name: {type: string}
+        url: {type: string}
+        service_id: {$ref: '#/components/schemas/Id'}
+        target_id: {$ref: '#/components/schemas/Id'}
+        route_id: {$ref: '#/components/schemas/Id'}
+        plugin_ids: {type: array, items: {$ref: '#/components/schemas/Id'}}
+    UpstreamProbe:
+      type: object
+      required: [reachable, status, latency_ms, message]
+      properties:
+        reachable: {type: boolean}
+        status: {type: integer, nullable: true}
+        latency_ms: {type: integer, minimum: 0}
+        message: {type: string}
     Id:
       type: integer
       format: int64
@@ -1508,12 +1631,51 @@ components:
         cert_pem: {type: string, description: PEM certificate chain.}
         key_pem: {type: string, writeOnly: true, description: Matching PEM private key.}
         acme_config: {$ref: '#/components/schemas/AcmeConfig'}
+    AcmeAccountStatus:
+      type: object
+      required: [configured, account_registered]
+      properties:
+        configured: {type: boolean, description: EAB registration credentials are saved.}
+        account_registered: {type: boolean, description: A reusable ACME account is already registered.}
+    AcmeEabCredentials:
+      type: object
+      additionalProperties: false
+      required: [directory_url, key_id, hmac_key]
+      properties:
+        directory_url: {type: string, example: zerossl}
+        key_id: {type: string, writeOnly: true, minLength: 1, maxLength: 1024}
+        hmac_key: {type: string, writeOnly: true, minLength: 1, maxLength: 4096, description: Base64url-encoded HMAC key, with optional padding.}
+    AcmeBackupState:
+      type: object
+      nullable: true
+      description: Present only in secret exports. These fields are restored by import.
+      properties:
+        cloudflare_api_token: {type: string, nullable: true}
+        accounts:
+          type: array
+          items:
+            type: object
+            required: [directory_url, credentials]
+            properties:
+              directory_url: {type: string}
+              email: {type: string, nullable: true}
+              credentials: {type: string, description: Serialized ACME account credentials.}
+        eab_credentials:
+          type: array
+          default: []
+          items:
+            type: object
+            required: [directory_url, key_id, hmac_key]
+            properties:
+              directory_url: {type: string}
+              key_id: {type: string}
+              hmac_key: {type: string}
     AcmeConfig:
       type: object
       required: [challenge]
       properties:
-        directory_url: {type: string, default: production, description: production, staging, or a custom HTTPS ACME directory URL.}
-        challenge: {type: string, enum: [dns-01, tls-alpn-01]}
+        directory_url: {type: string, default: production, description: "production (default), staging, zerossl, or a custom HTTPS ACME directory URL. Existing aliases remain supported."}
+        challenge: {type: string, enum: [dns-01, tls-alpn-01], description: "ZeroSSL uses dns-01 in Raahi. DNS-01 currently uses Cloudflare."}
         email: {type: string, format: email, nullable: true}
     AcmeStatus:
       type: object
@@ -1690,6 +1852,7 @@ components:
       type: object
       required: [raahi_export_version, settings, services, routes, stream_routes, plugins, consumers, certificates, wasm_modules]
       properties:
+        acme: {$ref: '#/components/schemas/AcmeBackupState'}
         raahi_export_version: {type: integer, enum: [1]}
         settings: {$ref: '#/components/schemas/Settings'}
         services: {type: array, items: {$ref: '#/components/schemas/ExportService'}}
