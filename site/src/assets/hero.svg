@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 420" role="img" aria-labelledby="title desc">
+  <title id="title">How Raahi routes a request</title>
+  <desc id="desc">A request passes through a route and its policies before Raahi sends it to a healthy upstream target.</desc>
+  <defs>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#171d19"/><stop offset="1" stop-color="#0b0d0c"/></linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse"><path d="M30 0H0V30" fill="none" stroke="#29312c" stroke-width="1" opacity=".55"/></pattern>
+  </defs>
+  <rect x="2" y="2" width="616" height="416" rx="32" fill="url(#panel)" stroke="#313b34" stroke-width="3"/>
+  <rect x="2" y="2" width="616" height="416" rx="32" fill="url(#grid)"/>
+  <text x="34" y="48" fill="#727d75" font-family="JetBrains Mono, monospace" font-size="12" letter-spacing="2">REQUEST PATH</text>
+  <circle cx="572" cy="43" r="6" fill="#72e6ae" filter="url(#glow)"/>
+  <text x="510" y="48" fill="#9ba69e" font-family="JetBrains Mono, monospace" font-size="11">HEALTHY</text>
+
+  <path d="M92 210H174" stroke="#ff6b35" stroke-width="4" stroke-linecap="round"/>
+  <path d="M279 210H359" stroke="#e6c972" stroke-width="4" stroke-linecap="round"/>
+  <path d="M462 210H514V138H545" stroke="#72e6ae" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M462 210H514V282H545" stroke="#72e6ae" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity=".72"/>
+  <circle cx="132" cy="210" r="7" fill="#ff6b35" filter="url(#glow)"/>
+  <circle cx="319" cy="210" r="7" fill="#e6c972" filter="url(#glow)"/>
+  <circle cx="514" cy="210" r="7" fill="#72e6ae" filter="url(#glow)"/>
+
+  <g font-family="Manrope, sans-serif">
+    <rect x="32" y="166" width="70" height="88" rx="16" fill="#202620" stroke="#3b453d"/>
+    <text x="67" y="201" text-anchor="middle" fill="#f2eee3" font-size="14" font-weight="700">client</text>
+    <text x="67" y="222" text-anchor="middle" fill="#7f8a82" font-size="11">HTTPS</text>
+
+    <rect x="174" y="153" width="105" height="114" rx="18" fill="#211b16" stroke="#72402d"/>
+    <text x="226" y="192" text-anchor="middle" fill="#ffb08d" font-size="14" font-weight="750">route</text>
+    <text x="226" y="215" text-anchor="middle" fill="#a88372" font-size="11">host + path</text>
+    <text x="226" y="235" text-anchor="middle" fill="#a88372" font-size="11">priority 100</text>
+
+    <rect x="359" y="153" width="103" height="114" rx="18" fill="#211f15" stroke="#665a2b"/>
+    <text x="410" y="192" text-anchor="middle" fill="#f2dc8b" font-size="14" font-weight="750">policy</text>
+    <text x="410" y="215" text-anchor="middle" fill="#998e60" font-size="11">auth · limit</text>
+    <text x="410" y="235" text-anchor="middle" fill="#998e60" font-size="11">cache · wasm</text>
+
+    <rect x="545" y="104" width="47" height="68" rx="14" fill="#15231c" stroke="#35694f"/>
+    <circle cx="568" cy="124" r="5" fill="#72e6ae"/>
+    <text x="568" y="148" text-anchor="middle" fill="#a4b9ab" font-size="10">:9001</text>
+    <rect x="545" y="248" width="47" height="68" rx="14" fill="#15231c" stroke="#35694f"/>
+    <circle cx="568" cy="268" r="5" fill="#72e6ae"/>
+    <text x="568" y="292" text-anchor="middle" fill="#a4b9ab" font-size="10">:9002</text>
+  </g>
+
+  <g font-family="JetBrains Mono, monospace" font-size="10" fill="#68736b">
+    <text x="34" y="382">FAST REQUEST PROXY</text>
+    <text x="448" y="382">CHANGES APPLY LIVE</text>
+  </g>
+</svg>

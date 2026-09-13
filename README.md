@@ -1,11 +1,12 @@
 # Raahi
 
-**Raahi** (Hindi/Urdu: *traveler, wayfarer*) is a configurable reverse proxy in the
-spirit of Kong — a fast Rust data plane built on [Pingora](https://github.com/cloudflare/pingora),
-with a REST admin API and a polished web UI on top of a single SQLite config store.
+**Raahi** means *traveler* or *wayfarer* in Hindi and Urdu. It is a fast,
+self-hosted reverse proxy and API gateway for HTTP, HTTPS, WebSocket, and TCP traffic.
 
-Configuration is **hot-reloaded**: changes made through the UI/API are persisted to
-SQLite and atomically swapped into the running proxy with no restart.
+Raahi routes requests to healthy upstreams and handles TLS, load balancing,
+authentication, rate limits, caching, traffic splitting, and request transforms. Manage it
+through the web UI or REST API. Route, policy, target, and certificate changes take effect
+without restarting the proxy.
 
 ```
             ┌──────────────────────── raahi (one process) ───────────────────────┐
@@ -80,19 +81,19 @@ SQLite and atomically swapped into the running proxy with no restart.
 - **Health**: active checks per target (TCP connect, or HTTP GET on a per-service
   `health_path`, using HTTPS with certificate verification for HTTPS services, with 2xx/3xx = pass)
   with consecutive-failure thresholds and up to 16 concurrent target probes, plus
-  passive circuit breaking — a failed connect ejects the backend immediately.
+  passive circuit breaking. A failed connection removes the backend immediately.
   Multi-address hosts (e.g. `localhost` → ::1 + 127.0.0.1) are resolved at configuration
   load and refreshed every 30 seconds (retaining last-known addresses on DNS failure).
   Probes try every address and elect the working one, which the
   proxy, L4 splicer, and health checks all share (`GET /api/v1/health` shows it).
 - **Declarative config**: `GET /api/v1/export` (optionally with secrets for a restorable
-  backup) and `POST /api/v1/import` — a transactional full-replace with id remapping,
+  backup) and `POST /api/v1/import`. Import replaces the configuration in one transaction and remaps IDs,
   usable for GitOps and disaster recovery.
 - **Prometheus**: `GET /metrics` exposition endpoint (requests, status classes,
   latency percentiles, per-route/consumer counters, target health gauges).
 - **JWKS / identity-provider auth**: the `jwt` plugin can verify RS256 tokens
   against a `jwks_url` (refreshed every 30s, kid-matched) instead of per-consumer
-  credentials — validates Auth0/Keycloak/Google-style tokens out of the box.
+  credentials. This verifies tokens from Auth0, Keycloak, Google, and compatible issuers.
 - **Live observability**: request metrics with latency percentiles (p50/p95/p99, µs precision),
   status breakdown, an SSE-driven dashboard with a "transit map" visualizing traffic flowing
   routes → services → targets (health-aware), a filterable live request log, and per-target
@@ -115,7 +116,7 @@ SQLite and atomically swapped into the running proxy with no restart.
 ## Prerequisites
 
 - **Rust** ≥ 1.84 (uses edition 2024).
-- **cmake**, **Go**, **Perl**, and a C/C++ compiler — required to build Pingora's
+- **cmake**, **Go**, **Perl**, and a C/C++ compiler are required to build Pingora's
   native dependencies (BoringSSL via `boring-sys`, and `libz-ng-sys` for compression).
   Go and Perl are build-time code generators only (BoringSSL generates `err_data.c` and
   its assembly with them); nothing Go links into the binary. On most distros:
@@ -126,7 +127,7 @@ SQLite and atomically swapped into the running proxy with no restart.
   automatically (`just doctor` shows the value); when calling cargo directly, export
   `BINDGEN_EXTRA_CLANG_ARGS="-I$(cc -print-file-name=include)"` yourself.
 - **Node ≥ 20 + pnpm** (or npm) to build the UI.
-- For `just dist` (static musl binary): **cargo-zigbuild + zig** —
+- `just dist` requires **cargo-zigbuild + zig**.
   `uv tool install cargo-zigbuild` (bundles zig via the `ziglang` package; expose it as
   `zig` on `PATH`, e.g. a one-line shim running `python -m ziglang`).
 
@@ -176,17 +177,25 @@ cd ui && pnpm dev            # UI with hot reload on http://localhost:5173
 
 ```
 raahi [OPTIONS]
-  --db <URL>           SQLite URL            [env RAAHI_DB]   (default sqlite://raahi.db)
-  --http-addr <ADDR>   proxy HTTP listener   (default from settings, 0.0.0.0:8080)
-  --admin-addr <ADDR>  admin API listener    (default from settings, 0.0.0.0:9080)
-  --ui-dir <DIR>       built UI to serve     [env RAAHI_UI_DIR] (default ui/build)
-  --run-dir <DIR>      runtime artifacts dir [env RAAHI_RUN_DIR] (default .raahi)
-  --seed               seed a demo service + route if the DB is empty
+  --db <URL>            SQLite URL             [env RAAHI_DB]      (default sqlite://raahi.db)
+  --http-addr <ADDR>    proxy HTTP listener override
+  --https-addr <ADDR>   proxy HTTPS listener override
+  --admin-addr <ADDR>   admin API listener override
+  --ui-dir <DIR>        built UI to serve      [env RAAHI_UI_DIR]  (default ui/build)
+  --threads <N>         proxy worker threads   [env RAAHI_THREADS] (default all CPU cores)
+  --seed                seed a demo service + route if the DB is empty
 ```
+
+Fresh databases default to `0.0.0.0:8080` for HTTP, `0.0.0.0:8443` for HTTPS,
+and `127.0.0.1:9080` for the admin API. CLI listener flags override persisted settings
+for the process. Set log filtering with `RUST_LOG` (default `info`).
 
 Listener addresses, the default LB algorithm, and the active TLS certificate live in the
 `settings` table (editable in the UI). Routes, services, plugins, consumers, and
 certificates are all managed via `/api/v1/*` and take effect immediately.
+
+The complete documentation site lives in [`site/`](site/) and is built with Astro Starlight.
+Run `cd site && npm install && npm run dev` for local documentation development.
 
 ## Admin API (`/api/v1`)
 
@@ -194,9 +203,9 @@ The complete OpenAPI 3.0 contract is served at [`/openapi.yaml`](http://localhos
 with an interactive reference at [`/docs`](http://localhost:9080/docs). See
 [`docs/API.md`](docs/API.md) for authentication, common workflows, and operational caveats.
 
-`services`, `services/{id}/targets`, `targets/{id}`, `routes`, `plugins`, `consumers`,
-`consumers/{id}/credentials`, `credentials/{id}`, `certificates`, and `settings` provide
-the control-plane CRUD surface. PUT is a full replacement, not a partial update.
+The API provides CRUD endpoints for `services`, `services/{id}/targets`, `targets/{id}`, `routes`,
+`plugins`, `consumers`, `consumers/{id}/credentials`, `credentials/{id}`, `certificates`, and
+`settings`. PUT replaces the complete resource rather than applying a partial update.
 
 ```bash
 curl -X POST localhost:9080/api/v1/services \
@@ -212,8 +221,8 @@ HTTPS listener serves the right one based on the SNI server name (exact or `*.wi
 falling back to the active/default certificate for non-SNI or unmatched requests. Upstream
 (proxy→backend) TLS is supported too.
 
-Manage certificates in the UI — upload PEM material or create an ACME-managed certificate,
-replace/remove it, or change the default. The running HTTPS listener picks changes up **live,
+Use the UI to upload PEM material, create an ACME-managed certificate, replace or remove a certificate,
+or choose the default certificate. The running HTTPS listener picks changes up **live,
 with no restart**, including the first certificate issued after startup.
 
 ACME supports Let's Encrypt production/staging (the default), ZeroSSL, or a custom HTTPS directory. TLS-ALPN-01

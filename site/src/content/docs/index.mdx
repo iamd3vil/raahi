@@ -1,0 +1,78 @@
+---
+title: Raahi
+description: A fast, self-hosted reverse proxy and API gateway for HTTP, HTTPS, WebSocket, and TCP traffic.
+template: splash
+hero:
+  title: A fast reverse proxy and API gateway.
+  tagline: Route HTTP, HTTPS, WebSocket, and TCP traffic. Add TLS, load balancing, authentication, rate limits, caching, and traffic controls from a web UI or API.
+  image:
+    file: ../../assets/hero.svg
+    alt: A request passing through a route and its policies to two healthy upstream targets.
+  actions:
+    - text: Get started
+      link: /start-here/quickstart/
+      icon: right-arrow
+      variant: primary
+    - text: See what it can do
+      link: /#what-raahi-handles
+      icon: open-book
+      variant: minimal
+    - text: API reference
+      link: /api-reference
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+<span class="terminal-label">Self-hosted and ready for live traffic</span>
+
+Raahi sits in front of your applications and sends each request to the right upstream. It handles certificates, health checks, policy, and traffic distribution in one service.
+
+Route and policy changes take effect without restarting the proxy.
+
+## What Raahi handles
+
+<CardGrid>
+  <Card title="HTTP, WebSocket, and TCP routing" icon="seti:config">
+    Route by hostname, path, method, or header. Proxy WebSockets over HTTP and raw TCP services through dedicated listeners.
+  </Card>
+  <Card title="TLS without certificate chores" icon="approve-check-circle">
+    Serve the right certificate for each hostname. Issue and renew certificates through Let's Encrypt, ZeroSSL, or another ACME provider.
+  </Card>
+  <Card title="Traffic policy at the proxy" icon="lock">
+    Add API keys, Basic auth, JWT verification, ACLs, IP rules, rate limits, CORS, redirects, caching, compression, and request transforms.
+  </Card>
+  <Card title="Load balancing and safe rollouts" icon="chart-bar">
+    Remove unhealthy targets, balance requests across backends, and shift a percentage of traffic to a canary service.
+  </Card>
+</CardGrid>
+
+## Why run Raahi
+
+- **Changes do not interrupt traffic.** Route, target, plugin, and certificate updates apply while the proxy keeps serving requests.
+- **The common controls are built in.** TLS, authentication, rate limiting, caching, health checks, and metrics do not require a separate plugin marketplace.
+- **You can operate it without editing config files.** Use the web UI for daily work and the REST API for automation, backups, and GitOps.
+- **One service handles L7 and L4 traffic.** Use host and path routing for web applications, plus raw TCP listeners for databases and other protocols.
+- **The state is easy to back up.** Raahi stores its configuration in one SQLite database and supports explicit export and restore endpoints.
+
+## How requests move
+
+A **service** describes an upstream application. **Targets** are the servers behind it. A **route** decides which requests reach the service. **Plugins** add authentication, limits, caching, transforms, and other policy.
+
+```text
+request -> route -> policy -> load balancer -> healthy target
+```
+
+## Start with a task
+
+<CardGrid stagger>
+  <LinkCard title="Run it locally" href="/start-here/quickstart/" description="Start Raahi, add two upstreams, and send a request through the proxy." />
+  <LinkCard title="Publish an application" href="/guides/add-an-application/" description="Create an upstream, domain route, HTTPS redirect, and access rules together." />
+  <LinkCard title="Understand route matching" href="/concepts/routes-and-matching/" description="See how hostnames, paths, methods, headers, and priorities select a route." />
+  <LinkCard title="Configure production" href="/operations/configuration/" description="Set listener addresses, worker threads, logging, backups, and restart boundaries." />
+</CardGrid>
+
+:::note[Current limits]
+Raahi runs as a single node with a local configuration database. It does not provide multi-node configuration sync or gRPC proxying.
+:::

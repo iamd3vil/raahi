@@ -1,0 +1,23 @@
+---
+const title = 'Raahi API reference';
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content="Interactive OpenAPI reference for the Raahi admin API." />
+    <title>{title}</title>
+    <link rel="icon" href="/favicon.svg" />
+    <style>
+      html, body { margin: 0; min-height: 100%; background: #0b0d0c; }
+      .back { position: fixed; z-index: 20; top: 12px; right: 18px; padding: 8px 12px; border: 1px solid #3a443d; border-radius: 9px; color: #dce4dd; background: rgba(11,13,12,.88); font: 600 13px/1.2 system-ui, sans-serif; text-decoration: none; backdrop-filter: blur(10px); }
+      .back:hover { border-color: #ff6b35; color: #ffb08d; }
+    </style>
+  </head>
+  <body>
+    <a class="back" href="/api/overview/">Back to docs</a>
+    <script is:inline id="api-reference" data-url="/openapi.yaml" data-configuration='{"theme":"saturn","darkMode":true,"hideModels":false}'></script>
+    <script is:inline src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+  </body>
+</html>

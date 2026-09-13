@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 188 44" role="img" aria-labelledby="title">
+  <title id="title">Raahi</title>
+  <rect x="1" y="1" width="42" height="42" rx="11" fill="#f7f4eb" stroke="#c8cec9" stroke-width="2"/>
+  <path d="M10 32V12h14c8 0 12 4 12 10 0 4-2 7-7 9l8 1v4h-10l-7-9h-4v5h-6Zm6-11h8c4 0 6-1 6-4s-2-4-6-4h-8v8Z" fill="#c84214"/>
+  <circle cx="36" cy="9" r="4" fill="#168456"/>
+  <text x="54" y="31" fill="#101411" font-family="Manrope, sans-serif" font-size="28" font-weight="760" letter-spacing="-1.2">Raahi</text>
+</svg>
