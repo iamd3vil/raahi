@@ -207,34 +207,82 @@
   onMount(load);
 </script>
 
-<div class="head-actions">
-  <p class="muted">TLS certificates for the HTTPS listener, selected per request by SNI.</p>
-  <button onclick={openNew}>+ Add certificate</button>
-</div>
-
-<div role="alert">
-  <strong>Note:</strong> Certificates are served by <strong>SNI</strong> — the HTTPS listener picks the
-  matching certificate per request (exact or <code>*.wildcard</code>), falling back to the
-  active certificate set in <code>Settings</code>. Certificate changes apply live (no restart)
-  while HTTPS is running.
-</div>
-
-<div class="card provider-card">
+<div class="page-intro">
   <div>
-    <strong>Cloudflare DNS</strong>
-    <p class="muted">API token used for DNS-01 challenges. It is stored as a secret and never returned.</p>
+    <p class="eyebrow">HTTPS security</p>
+    <p class="muted">Issue, upload, and renew the certificates served by Raahi.</p>
   </div>
-  <div class="provider-actions">
-    <span class:configured={cfConfigured}>{cfConfigured ? 'Configured' : 'Not configured'}</span>
-    <input type="password" bind:value={cfToken} placeholder="Cloudflare API token" />
-    <button class="small" disabled={!cfToken.trim()} onclick={saveCloudflareToken}>Save token</button>
-    {#if cfConfigured}
-      <button class="ghost small" data-variant="danger" onclick={clearCloudflareToken}>Remove</button>
-    {/if}
-  </div>
+  <button class="primary-action" onclick={openNew}>
+    <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+      <path d="M10 4v12M4 10h12" />
+    </svg>
+    Add certificate
+  </button>
 </div>
 
-<div class="card">
+<aside class="sni-note" aria-labelledby="sni-note-title">
+  <span class="note-icon" aria-hidden="true">
+    <svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+      <circle cx="10" cy="10" r="7.25" />
+      <path d="M10 9v4M10 6.5v.1" />
+    </svg>
+  </span>
+  <div>
+    <strong id="sni-note-title">Automatic SNI matching</strong>
+    <p>
+      Exact and <code>*.wildcard</code> hostnames are matched per request. If none match, Raahi uses
+      the default certificate from <code>Settings</code>. Changes apply immediately while HTTPS is running.
+    </p>
+  </div>
+</aside>
+
+<section class="card provider-card" aria-labelledby="cloudflare-title">
+  <div class="provider-copy">
+    <span class="provider-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M7.5 18.5h10.8a3.2 3.2 0 0 0 .5-6.4A6.8 6.8 0 0 0 5.6 10a4.3 4.3 0 0 0 1.9 8.5Z" />
+        <path d="M8.5 14.5h7" />
+      </svg>
+    </span>
+    <div>
+      <div class="provider-heading">
+        <h2 id="cloudflare-title">Cloudflare DNS</h2>
+        <span class="provider-status" class:configured={cfConfigured}>
+          <span class="status-dot"></span>
+          {cfConfigured ? 'Connected' : 'Not configured'}
+        </span>
+      </div>
+      <p class="muted">Used for DNS-01 challenges and wildcard certificates. The token is encrypted and never returned.</p>
+    </div>
+  </div>
+  <form class="provider-form" onsubmit={(event) => { event.preventDefault(); saveCloudflareToken(); }}>
+    <label for="cloudflare-token">{cfConfigured ? 'Replace API token' : 'API token'}</label>
+    <div class="token-control">
+      <input
+        id="cloudflare-token"
+        type="password"
+        autocomplete="off"
+        bind:value={cfToken}
+        placeholder={cfConfigured ? 'Enter a new token' : 'Cloudflare API token'}
+      />
+      <button class="small" type="submit" disabled={!cfToken.trim()}>{cfConfigured ? 'Replace' : 'Save token'}</button>
+      {#if cfConfigured}
+        <button class="ghost small remove-token" type="button" data-variant="danger" onclick={clearCloudflareToken}>Remove</button>
+      {/if}
+    </div>
+  </form>
+</section>
+
+<section class="card certificate-card" aria-labelledby="certificate-list-title">
+  <div class="certificate-card-head">
+    <div>
+      <div class="title-row">
+        <h2 id="certificate-list-title">Certificates</h2>
+        {#if !loading}<span class="count-badge">{certs.length}</span>{/if}
+      </div>
+      <p class="muted">Certificates currently available to the HTTPS listener.</p>
+    </div>
+  </div>
   {#if loading}
     <div class="empty"><span aria-busy="true" data-spinner="small"></span></div>
   {:else if certs.length === 0}
@@ -244,37 +292,47 @@
       description="Add a PEM certificate + key to serve HTTPS. Certificates are matched per request by SNI and hot-reload without a restart."
     >
       {#snippet action()}
-        <button onclick={openNew}>+ Add your first certificate</button>
+        <button onclick={openNew}>Add your first certificate</button>
       {/snippet}
     </EmptyState>
   {:else}
-    <div class="table">
+    <div class="table certificate-table">
       <table>
-        <thead><tr><th>Name</th><th>SNI</th><th>Management</th><th>Status</th><th>ID</th><th></th></tr></thead>
+        <thead>
+          <tr><th>Name</th><th>Hostnames</th><th>Managed by</th><th>Status</th><th>ID</th><th><span class="sr-only">Actions</span></th></tr>
+        </thead>
         <tbody>
           {#each certs as c (c.id)}
             <tr>
-              <td><strong>{c.name}</strong></td>
-              <td>
-                {#if c.sni.length === 0}<span class="faint">any</span>{/if}
-                {#each c.sni as s}<span class="chip">{s}</span>{/each}
+              <td class="name-cell"><strong>{c.name}</strong></td>
+              <td class="sni-cell" data-label="Hostnames">
+                <div class="sni-list">
+                  {#if c.sni.length === 0}<span class="faint">Any hostname</span>{/if}
+                  {#each c.sni as s}<code class="hostname">{s}</code>{/each}
+                </div>
               </td>
-              <td>{c.acme_config ? providerLabel(c.acme_config.directory_url) : 'Manual'}</td>
-              <td>
-                {#if c.acme_status}
-                  <span class="chip status-{c.acme_status.state}">{c.acme_status.state}</span>
-                  {#if c.acme_status.expires_at}
-                    <span class="faint">expires {new Date(c.acme_status.expires_at).toLocaleDateString()}</span>
-                  {/if}
-                  {#if c.acme_status.last_error}
-                    <span class="error-detail" title={c.acme_status.last_error}>{c.acme_status.last_error}</span>
-                  {/if}
-                {:else}
-                  <span class="faint">ready</span>
-                {/if}
+              <td class="management-cell" data-label="Managed by">
+                <span class="management">{c.acme_config ? providerLabel(c.acme_config.directory_url) : 'Manual upload'}</span>
               </td>
-              <td class="mono">#{c.id}</td>
-              <td class="actions">
+              <td class="status-cell" data-label="Status">
+                <div class="status-stack">
+                  {#if c.acme_status}
+                    <span class="certificate-status status-{c.acme_status.state}">
+                      <span class="status-dot"></span>{c.acme_status.state}
+                    </span>
+                    {#if c.acme_status.expires_at}
+                      <span class="expiry">Expires {new Date(c.acme_status.expires_at).toLocaleDateString()}</span>
+                    {/if}
+                    {#if c.acme_status.last_error}
+                      <span class="error-detail" title={c.acme_status.last_error}>{c.acme_status.last_error}</span>
+                    {/if}
+                  {:else}
+                    <span class="certificate-status status-ready"><span class="status-dot"></span>ready</span>
+                  {/if}
+                </div>
+              </td>
+              <td class="mono id-cell" data-label="ID">#{c.id}</td>
+              <td class="actions row-actions">
                 {#if c.acme_config}
                   <button class="ghost small" onclick={() => renew(c)}>Renew</button>
                 {/if}
@@ -286,7 +344,7 @@
       </table>
     </div>
   {/if}
-</div>
+</section>
 
 <Drawer bind:open title="Add certificate" onclose={() => { eabKeyId = ''; eabHmacKey = ''; }}>
   {#if formError}<p class="form-error" role="alert">{formError}</p>{/if}
@@ -385,72 +443,504 @@
 </Drawer>
 
 <style>
-  .form-error { color: var(--danger); font-size: 13px; }
-  .eab-card { padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-medium); margin: 16px 0; }
-  .eab-card p { font-size: 12px; margin-top: 8px; }
-  .eab-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-
-  [role='alert'] {
-    margin-bottom: 16px;
-    font-size: 13px;
-  }
-
-  .provider-card,
-  .provider-actions,
-  .mode-switch {
+  .page-intro {
     display: flex;
     align-items: center;
-    gap: 10px;
+    justify-content: space-between;
+    gap: 20px;
+    margin-bottom: 16px;
+  }
+
+  .page-intro p {
+    margin: 0;
+  }
+
+  .page-intro .muted {
+    font-size: 13.5px;
+  }
+
+  .eyebrow {
+    margin-bottom: 3px !important;
+    color: var(--faint-foreground);
+    font-size: 10.5px;
+    font-weight: 650;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+
+  .primary-action svg {
+    flex: none;
+  }
+
+  .primary-action:active {
+    transform: scale(0.98);
+  }
+
+  .sni-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 11px;
+    margin-bottom: 16px;
+    padding: 13px 15px;
+    border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--border));
+    border-radius: var(--radius-medium);
+    background: color-mix(in srgb, var(--primary) 5%, var(--card));
+    font-size: 12.5px;
+  }
+
+  .sni-note strong {
+    display: block;
+    margin-bottom: 2px;
+    color: var(--foreground);
+    font-size: 12.5px;
+  }
+
+  .sni-note p {
+    margin: 0;
+    color: var(--muted-foreground);
+    line-height: 1.55;
+  }
+
+  .note-icon {
+    display: grid;
+    flex: none;
+    width: 28px;
+    height: 28px;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--primary);
   }
 
   .provider-card {
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: minmax(280px, 1fr) minmax(420px, 580px);
+    align-items: center;
+    gap: 32px;
     margin-bottom: 16px;
   }
 
-  .provider-card p {
-    margin: 4px 0 0;
+  .provider-copy {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    min-width: 0;
   }
 
-  .provider-actions input {
-    width: 230px;
+  .provider-copy h2,
+  .certificate-card h2 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: var(--font-semibold);
+  }
+
+  .provider-copy p,
+  .certificate-card-head p {
+    margin: 4px 0 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
+
+  .provider-icon {
+    display: grid;
+    flex: none;
+    width: 36px;
+    height: 36px;
+    place-items: center;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-medium);
+    background: var(--muted);
+    color: var(--muted-foreground);
+  }
+
+  .provider-heading,
+  .title-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .provider-status,
+  .certificate-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    width: max-content;
+    color: var(--faint-foreground);
+    font-size: 11.5px;
+    font-weight: 550;
+  }
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    flex: none;
+    border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent);
   }
 
   .configured,
-  .status-issued {
-    color: var(--success, #2f9e62);
+  .status-issued,
+  .status-ready {
+    color: var(--success);
   }
 
   .status-failed,
   .error-detail {
-    color: var(--danger, #c84d4d);
+    color: var(--danger);
+  }
+
+  .status-pending,
+  .status-issuing,
+  .status-renewing {
+    color: var(--warning);
+  }
+
+  .provider-form {
+    min-width: 0;
+  }
+
+  .provider-form > label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--muted-foreground);
+    font-size: 11.5px;
+    font-weight: 550;
+  }
+
+  .token-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .token-control input {
+    min-width: 160px;
+    flex: 1;
+  }
+
+  .remove-token {
+    padding-inline: 9px;
+  }
+
+  .certificate-card {
+    padding-bottom: 10px;
+  }
+
+  .certificate-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .count-badge {
+    min-width: 20px;
+    padding: 1px 6px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--muted);
+    color: var(--muted-foreground);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+
+  .certificate-table {
+    margin-top: 2px;
+  }
+
+  .certificate-table th {
+    padding-block: 12px;
+    color: var(--faint-foreground);
+    font-size: 10.5px;
+    font-weight: 650;
+    letter-spacing: 0.055em;
+    text-transform: uppercase;
+  }
+
+  .certificate-table td {
+    padding-block: 14px;
+    vertical-align: middle;
+  }
+
+  .certificate-table th:first-child,
+  .certificate-table td:first-child {
+    padding-left: 8px;
+  }
+
+  .certificate-table th:last-child,
+  .certificate-table td:last-child {
+    padding-right: 8px;
+  }
+
+  .certificate-table tbody tr:last-child {
+    border-bottom: none;
+  }
+
+  .name-cell strong {
+    font-size: 13.5px;
+    font-weight: 600;
+  }
+
+  .sni-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+
+  .hostname {
+    display: inline-flex;
+    padding: 3px 7px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--muted);
+    color: var(--muted-foreground);
+    font-size: 11.5px;
+    line-height: 1.25;
+  }
+
+  .management {
+    color: var(--muted-foreground);
+    font-size: 12.5px;
+  }
+
+  .status-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+  }
+
+  .certificate-status {
+    text-transform: capitalize;
+  }
+
+  .expiry {
+    color: var(--faint-foreground);
+    font-size: 11.5px;
+    white-space: nowrap;
   }
 
   .error-detail {
     display: block;
-    max-width: 240px;
+    max-width: 220px;
     overflow: hidden;
+    font-size: 11.5px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
+  .id-cell {
+    color: var(--faint-foreground);
+    font-size: 12px;
+  }
+
+  .row-actions {
+    min-width: 132px;
+  }
+
+  .form-error {
+    color: var(--danger);
+    font-size: 13px;
+  }
+
+  .eab-card {
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-medium);
+    margin: 16px 0;
+  }
+
+  .eab-card p {
+    margin-top: 8px;
+    font-size: 12px;
+  }
+
+  .eab-actions,
   .mode-switch {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .mode-switch {
+    width: fit-content;
     margin-bottom: 16px;
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-medium);
+    background: var(--muted);
+  }
+
+  .mode-switch button {
+    border-color: transparent;
   }
 
   .mode-switch .active {
-    border-color: currentColor;
+    border-color: var(--border);
+    background: var(--card);
+    color: var(--foreground);
+    box-shadow: var(--shadow-small);
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  @media (max-width: 1050px) {
+    .provider-card {
+      grid-template-columns: 1fr;
+      gap: 18px;
+    }
+
+    .provider-form {
+      padding-left: 48px;
+    }
+  }
+
+  @media (max-width: 820px) {
+    .certificate-table th:nth-child(5),
+    .certificate-table td:nth-child(5) {
+      display: none;
+    }
   }
 
   @media (max-width: 760px) {
-    .provider-card,
-    .provider-actions {
+    .page-intro {
+      align-items: flex-start;
+    }
+
+    .sni-note {
+      padding: 12px;
+    }
+
+    .provider-form {
+      padding-left: 0;
+    }
+
+    .token-control {
       align-items: stretch;
+      flex-wrap: wrap;
+    }
+
+    .token-control input {
+      flex-basis: 100%;
+    }
+
+    .certificate-card {
+      padding-bottom: 16px;
+    }
+
+    .certificate-table {
+      min-width: 0;
+      margin-top: 14px;
+      overflow: visible;
+    }
+
+    .certificate-table table,
+    .certificate-table tbody {
+      display: block;
+    }
+
+    .certificate-table thead {
+      display: none;
+    }
+
+    .certificate-table tbody {
+      display: grid;
+      gap: 10px;
+    }
+
+    .certificate-table tbody tr {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-medium);
+      background: color-mix(in srgb, var(--muted) 45%, transparent);
+    }
+
+    .certificate-table tbody tr:hover {
+      background: color-mix(in srgb, var(--muted) 45%, transparent);
+    }
+
+    .certificate-table td,
+    .certificate-table th:first-child,
+    .certificate-table td:first-child,
+    .certificate-table th:last-child,
+    .certificate-table td:last-child {
+      display: block;
+      padding: 0;
+    }
+
+    .name-cell {
+      min-width: 0;
+    }
+
+    .id-cell {
+      grid-column: 2;
+      grid-row: 1;
+    }
+
+    .sni-cell,
+    .management-cell,
+    .status-cell,
+    .row-actions {
+      grid-column: 1 / -1;
+    }
+
+    .certificate-table td[data-label]::before {
+      content: attr(data-label);
+      display: block;
+      margin-bottom: 5px;
+      color: var(--faint-foreground);
+      font-family: var(--font-sans);
+      font-size: 10px;
+      font-weight: 650;
+      letter-spacing: 0.055em;
+      text-transform: uppercase;
+    }
+
+    .row-actions {
+      display: flex !important;
+      justify-content: flex-start;
+      padding-top: 10px !important;
+      border-top: 1px solid var(--border);
+      text-align: left;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .page-intro {
       flex-direction: column;
     }
 
-    .provider-actions input {
-      width: auto;
+    .primary-action {
+      width: 100%;
+    }
+
+    .provider-copy {
+      gap: 10px;
+    }
+
+    .provider-icon {
+      width: 32px;
+      height: 32px;
     }
   }
 </style>

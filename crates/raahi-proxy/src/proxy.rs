@@ -408,6 +408,8 @@ impl ProxyHttp for RaahiProxy {
             if ctx.is_tls { "https" } else { "http" },
         );
 
+        coalesce_cookie_headers(upstream_request)?;
+
         // Plugin request-header transforms.
         for k in &ctx.req_remove {
             upstream_request.remove_header(k.as_str());
@@ -615,5 +617,64 @@ impl ProxyHttp for RaahiProxy {
         }
 
         self.metrics.record(record);
+    }
+}
+
+// HTTP/2 may split cookies across fields (RFC 9113 section 8.2.3).
+// HTTP/1 backends need one field joined with "; ", never commas.
+fn coalesce_cookie_headers(request: &mut RequestHeader) -> Result<()> {
+    let mut values = request.headers.get_all(http::header::COOKIE).iter();
+    let Some(first) = values.next() else {
+        return Ok(());
+    };
+    let Some(second) = values.next() else {
+        return Ok(());
+    };
+    let mut joined = first.as_bytes().to_vec();
+    for value in std::iter::once(second).chain(values) {
+        joined.extend_from_slice(b"; ");
+        joined.extend_from_slice(value.as_bytes());
+    }
+    request.insert_header("cookie", joined)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod cookie_tests {
+    use super::*;
+
+    #[test]
+    fn split_cookies_preserve_csrf_and_session_in_order() {
+        let mut request = RequestHeader::build("POST", b"/accounts/login/", None).unwrap();
+        for value in [
+            "messages=notice",
+            "paperless_csrftoken=csrf; preference=dark",
+            "paperless_sessionid=session",
+        ] {
+            request.append_header("cookie", value).unwrap();
+        }
+        request.append_header("x-test", "untouched").unwrap();
+        coalesce_cookie_headers(&mut request).unwrap();
+        assert_eq!(request.headers.get_all("cookie").iter().count(), 1);
+        assert_eq!(
+            request.headers["cookie"],
+            "messages=notice; paperless_csrftoken=csrf; preference=dark; paperless_sessionid=session"
+        );
+        assert_eq!(request.headers["x-test"], "untouched");
+    }
+
+    #[test]
+    fn single_cookie_is_unchanged() {
+        let mut request = RequestHeader::build("GET", b"/", None).unwrap();
+        request.append_header("cookie", "a=1; b=2").unwrap();
+        coalesce_cookie_headers(&mut request).unwrap();
+        assert_eq!(request.headers["cookie"], "a=1; b=2");
+    }
+
+    #[test]
+    fn absent_cookie_stays_absent() {
+        let mut request = RequestHeader::build("GET", b"/", None).unwrap();
+        coalesce_cookie_headers(&mut request).unwrap();
+        assert!(!request.headers.contains_key("cookie"));
     }
 }
