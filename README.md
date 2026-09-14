@@ -8,7 +8,7 @@ It routes requests to healthy upstreams and handles TLS, load balancing, authent
 
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 [![CI](https://github.com/iamd3vil/raahi/actions/workflows/ci.yml/badge.svg)](https://github.com/iamd3vil/raahi/actions/workflows/ci.yml)
-[![Rust 1.85+](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust 1.88+](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
 [![Documentation](https://img.shields.io/badge/docs-raahi.sarat.dev-72e6ae.svg)](https://raahi.sarat.dev)
 
 <p align="center">
@@ -53,7 +53,7 @@ Raahi uses [Pingora](https://github.com/cloudflare/pingora) for proxying, Axum f
 
 ### Prerequisites
 
-- Rust 1.85 or newer
+- Rust 1.88 or newer
 - Node.js 22.12 or newer
 - `cmake`, Go, Perl, and a C or C++ compiler
 - [`just`](https://just.systems/)

@@ -9,7 +9,7 @@ Raahi ships as one executable plus the built admin UI.
 
 ## Prerequisites
 
-- Rust 1.85 or newer to compile Raahi
+- Rust 1.88 or newer to compile Raahi
 - Node.js 22.12 or newer
 - `cmake`, Go, Perl, and a C or C++ compiler for native build dependencies
 - `just` for the repository recipes
