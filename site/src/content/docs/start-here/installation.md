@@ -37,13 +37,14 @@ GitHub Releases publishes Linux archives for amd64 and arm64. The archive contai
 
 ```bash
 # Replace amd64 with arm64 when needed.
-curl -LO https://github.com/iamd3vil/raahi/releases/download/v0.1.0/raahi-v0.1.0-linux-amd64.tar.gz
+archive=raahi-v0.1.0-linux-amd64.tar.gz
+curl -LO "https://github.com/iamd3vil/raahi/releases/download/v0.1.0/$archive"
 curl -LO https://github.com/iamd3vil/raahi/releases/download/v0.1.0/checksums.txt
-sha256sum -c checksums.txt --ignore-missing
-mkdir raahi-v0.1.0-linux-amd64
-
-tar xzf raahi-v0.1.0-linux-amd64.tar.gz -C raahi-v0.1.0-linux-amd64
-cd raahi-v0.1.0-linux-amd64
+checksum_line="$(grep -F "$archive" checksums.txt)"
+expected="${checksum_line#*$'\t'}"
+echo "$expected  $archive" | sha256sum -c -
+tar xzf "$archive"
+cd "${archive%.tar.gz}"
 ./raahi --help
 ```
 

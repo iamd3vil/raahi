@@ -16,11 +16,12 @@ Raahi's first public release.
 Download the archive for your architecture and `checksums.txt`, then verify and extract it:
 
 ```bash
-sha256sum -c checksums.txt --ignore-missing
-mkdir raahi-{{ meta.tag }}-linux-amd64
-
-tar xzf raahi-{{ meta.tag }}-linux-amd64.tar.gz -C raahi-{{ meta.tag }}-linux-amd64
-cd raahi-{{ meta.tag }}-linux-amd64
+archive=raahi-{{ meta.tag }}-linux-amd64.tar.gz
+checksum_line="$(grep -F "$archive" checksums.txt)"
+expected="${checksum_line#*$'\t'}"
+echo "$expected  $archive" | sha256sum -c -
+tar xzf "$archive"
+cd "${archive%.tar.gz}"
 ./raahi --help
 ```
 
