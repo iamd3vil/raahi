@@ -1,259 +1,206 @@
 # Raahi
 
-**Raahi** means *traveler* or *wayfarer* in Hindi and Urdu. It is a fast,
-self-hosted reverse proxy and API gateway for HTTP, HTTPS, WebSocket, and TCP traffic.
+**Raahi is an open-source, self-hosted reverse proxy and API gateway for HTTP, HTTPS, WebSocket, and TCP traffic.**
 
-Raahi routes requests to healthy upstreams and handles TLS, load balancing,
-authentication, rate limits, caching, traffic splitting, and request transforms. Manage it
-through the web UI or REST API. Route, policy, target, and certificate changes take effect
-without restarting the proxy.
+It routes requests to healthy upstreams and handles TLS, load balancing, authentication, rate limits, caching, traffic splitting, and request transforms. Manage it through the web UI or REST API. Configuration and certificate changes apply without restarting the proxy.
 
+[Documentation](https://raahi.sarat.dev) · [API reference](https://raahi.sarat.dev/api-reference/) · [OpenAPI specification](docs/openapi.yaml)
+
+[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
+[![CI](https://github.com/iamd3vil/raahi/actions/workflows/ci.yml/badge.svg)](https://github.com/iamd3vil/raahi/actions/workflows/ci.yml)
+[![Rust 1.84+](https://img.shields.io/badge/rust-1.84%2B-orange.svg)](https://www.rust-lang.org/)
+[![Documentation](https://img.shields.io/badge/docs-raahi.sarat.dev-72e6ae.svg)](https://raahi.sarat.dev)
+
+<p align="center">
+  <img src="site/src/assets/hero.svg" alt="A request passing through a Raahi route and its policies to healthy upstream targets" width="720">
+</p>
+
+> [!NOTE]
+> Raahi is pre-1.0. The management API and configuration model may change between releases.
+
+## What Raahi handles
+
+- **HTTP and WebSocket routing.** Match exact or wildcard hostnames, path prefixes or regular expressions, methods, and headers.
+- **TCP proxying.** Open raw TCP listeners for databases, Redis, and other non-HTTP services.
+- **TLS termination.** Select certificates by SNI and replace them while the HTTPS listener remains active.
+- **Automatic certificates.** Issue and renew certificates through Let's Encrypt, ZeroSSL, or a custom ACME provider. Cloudflare DNS-01 supports wildcard certificates.
+- **Load balancing and health checks.** Use round-robin, weighted, random, or client-IP hashing across healthy targets.
+- **Traffic splitting.** Send a controlled share of requests to a canary or replacement service.
+- **Authentication and access control.** Apply API key, Basic, JWT, JWKS, ACL, and IP restriction policies.
+- **Traffic policy.** Add rate limits, request size limits, redirects, CORS, caching, compression, request IDs, and header or body transforms.
+- **Custom WASM plugins.** Run request and response code with a per-call fuel limit.
+- **Live observability.** Inspect recent requests, latency percentiles, route and consumer counters, target health, and Prometheus metrics.
+- **Backup and restore.** Export the configuration as JSON and restore it in one transaction.
+
+## How it works
+
+Raahi uses four main resources:
+
+- A **service** describes an upstream application and its connection settings.
+- A **target** is a server that can handle requests for a service.
+- A **route** selects a service by hostname, path, method, or header.
+- A **plugin** adds authentication, access rules, caching, limits, transforms, or other policy.
+
+```text
+request -> route -> plugins -> load balancer -> healthy target
 ```
-            ┌──────────────────────── raahi (one process) ───────────────────────┐
- client ───▶│  Pingora data plane  ── reads ──┐                                   │
- :8080/:8443│   route → plugins → LB → upstream │   ArcSwap<Config>  (hot reload)  │
- admin  ───▶│  axum admin API + UI  ── writes ─┴──▶ SQLite  ──── rebuild snapshot  │
- :9080      │  active health checks                                               │
-            └─────────────────────────────────────────────────────────────────────┘
-```
 
-## Features
+The proxy and management API run in one process. Raahi stores configuration in SQLite. Each successful mutation builds a complete configuration and swaps it into the running proxy before the API response returns.
 
-- **Add application**: a two-step setup/review flow creates a service, target, domain
-  route, and optional HTTPS redirect, HSTS, and IP allowlist together. Test upstream
-  connectivity before saving. HTTPS reuses an existing matching certificate; drafts
-  survive visiting Certificates or Settings. Creation is transactional and reloads once.
-
-- **Routing** by host (exact + `*.wildcard`), path prefix (longest-match) or
-  **`~`-prefixed regex paths** (anchored at the path start; `strip_path` strips the
-  matched portion), method, and **header conditions** (exact value or presence),
-  with priorities.
-- **Traffic splitting / canary**: routes can split across services by weight
-  (weighted round-robin per request).
-- **Load balancing** across weighted targets: round-robin, weighted, random, consistent-hash (by client IP).
-- **L4 stream routes**: raw TCP listeners spliced to services (databases, Redis, any
-  TCP protocol) reusing the same load balancing and health flags, with per-listener
-  connection/byte metrics. Retargeting applies live; listener add/remove needs a restart.
-- **Path & host rewriting** (`strip_path`, `preserve_host`) and `X-Forwarded-*` injection.
-- **Built-in plugins** (native Rust; scoped global / per-service / per-route):
-  - Auth: `key-auth` (header or query), `basic-auth` (bcrypt), and `jwt`
-    (HS256/384/512 + RS256, per-consumer credentials looked up by key claim)
-  - Access: `acl` (consumer-group allow/deny) and `ip-restriction` (CIDR allow/deny)
-  - `rate-limit` (sliding window, keyed by IP / consumer / route, `RateLimit-*`
-    headers, counters survive config reloads)
-  - Traffic: `request-termination` (maintenance mode), `request-size-limit` (413),
-    and `redirect` (301/302/307/308 with path preservation)
-  - `cors` (preflight + response headers)
-  - `request-id` (correlation id: UUID v4 injected upstream and echoed downstream,
-    preserved from the client when present; runs first so even short-circuited
-    responses carry it)
-  - `response-compression` (gzip / brotli / zstd for downstream clients, negotiated
-    from `Accept-Encoding` by Pingora's built-in compression module)
-  - `hsts` (`Strict-Transport-Security` on direct HTTPS responses only, with optional
-    `includeSubDomains` and `preload` directives)
-  - `proxy-cache` (in-memory TTL response cache with `x-cache`/`Age` headers and a purge API).
-    Only anonymous, unconditional GETs are eligible. Cookies, authorization, authenticated
-    consumers, range/conditional requests, and request cache directives bypass it. Responses
-    with `Set-Cookie`, `Vary`, `Expires`, or private/no-cache/no-store directives bypass it;
-    upstream max-age/s-maxage and Age cap freshness. Cache content is limited to 64 MiB
-    across 10,000 entries, isolated by route/service/HTTP-vs-HTTPS, and invalidated on reload.
-  - `request-transform` / `response-transform` (add / remove headers) and
-    `response-body-transform` (find/replace on text bodies)
-  - `http-log` (batched JSON delivery of request records to an external collector,
-    off the hot path)
-- **WASM user plugins**: upload `.wasm` binaries or WAT source and run them per
-  route/service/globally, sandboxed and fuel-metered (wasmi). Modules implement a
-  JSON-over-memory ABI (`raahi_alloc`, `on_request`, `on_response`) and can
-  short-circuit requests, mutate headers, and react to upstream responses. Multiple
-  wasm plugins stack on one route. See `examples/wasm/`.
-- **Admin users, roles, and SSO**: password sign-in (bcrypt) and OpenID Connect
-  single sign-on (authorization code + PKCE; Google, Keycloak, Authentik, Pocket ID,
-  Auth0, ...) with cookie sessions, plus `viewer` / `editor` / `admin` roles enforced by
-  the API. Optional auto-provisioning on first SSO login, restricted by email domain.
-  The legacy admin bearer token (SHA-256, generated/rotated from the UI or
-  `POST /api/v1/admin/token`; SSE uses `?access_token=`) remains for automation and
-  acts as admin. Auth is open until a user or token exists. Lockout recovery: empty
-  the `users` table / clear `settings.admin_token_hash` in SQLite and restart.
-- **TLS termination** via boringssl with per-SNI certificate selection and live (no-restart)
-  certificate reload, **automatic ACME issuance and renewal** via TLS-ALPN-01 or Cloudflare
-  DNS-01 (including wildcards), and **upstream TLS**. Choose Let’s Encrypt (default),
-  ZeroSSL (with EAB registration), or a custom ACME provider in the certificate form.
-- **Health**: active checks per target (TCP connect, or HTTP GET on a per-service
-  `health_path`, using HTTPS with certificate verification for HTTPS services, with 2xx/3xx = pass)
-  with consecutive-failure thresholds and up to 16 concurrent target probes, plus
-  passive circuit breaking. A failed connection removes the backend immediately.
-  Multi-address hosts (e.g. `localhost` → ::1 + 127.0.0.1) are resolved at configuration
-  load and refreshed every 30 seconds (retaining last-known addresses on DNS failure).
-  Probes try every address and elect the working one, which the
-  proxy, L4 splicer, and health checks all share (`GET /api/v1/health` shows it).
-- **Declarative config**: `GET /api/v1/export` (optionally with secrets for a restorable
-  backup) and `POST /api/v1/import`. Import replaces the configuration in one transaction and remaps IDs,
-  usable for GitOps and disaster recovery.
-- **Prometheus**: `GET /metrics` exposition endpoint (requests, status classes,
-  latency percentiles, per-route/consumer counters, target health gauges).
-- **JWKS / identity-provider auth**: the `jwt` plugin can verify RS256 tokens
-  against a `jwks_url` (refreshed every 30s, kid-matched) instead of per-consumer
-  credentials. This verifies tokens from Auth0, Keycloak, Google, and compatible issuers.
-- **Live observability**: request metrics with latency percentiles (p50/p95/p99, µs precision),
-  status breakdown, an SSE-driven dashboard with a "transit map" visualizing traffic flowing
-  routes → services → targets (health-aware), a filterable live request log, and per-target
-  health via `GET /api/v1/health`.
-- **Operator tooling**: a route tester (`GET /api/v1/router/test`) that dry-runs the router
-  for any method/host/path, and one-click config export (`GET /api/v1/export`, secrets excluded).
-
-## Workspace layout
-
-| Crate | Responsibility |
-|-------|----------------|
-| `raahi-core`  | Domain types, the compiled `ProxyConfig` snapshot, and router matching (pure, unit-tested). |
-| `raahi-store` | SQLite persistence (sqlx), migrations, CRUD, and snapshot building. |
-| `raahi-proxy` | The Pingora `ProxyHttp` data plane: LB, plugins, health checks, metrics, hot reload. |
-| `raahi-api`   | axum admin REST API + UI serving (users, roles, sessions, OIDC SSO), run as a Pingora background service. |
-| `raahi-acme`  | ACME accounts, Cloudflare DNS-01, TLS-ALPN-01, issuance, and renewal. |
-| `raahi` (bin) | Wires the store, data plane, and control plane into one Pingora server. |
-| `ui/`         | Svelte 5 + Vite SPA (the "Aurora Transit" admin UI). |
-
-## Prerequisites
-
-- **Rust** ≥ 1.84 (uses edition 2024).
-- **cmake**, **Go**, **Perl**, and a C/C++ compiler are required to build Pingora's
-  native dependencies (BoringSSL via `boring-sys`, and `libz-ng-sys` for compression).
-  Go and Perl are build-time code generators only (BoringSSL generates `err_data.c` and
-  its assembly with them); nothing Go links into the binary. On most distros:
-  `apt install cmake golang perl` / `pacman -S cmake go perl`. Without root,
-  `uv tool install cmake` (or `pip install cmake`) provides cmake on `PATH`.
-  If `boring-sys` fails with `'stddef.h' file not found`, libclang is installed without
-  its builtin headers. The `just` recipes detect this and set `BINDGEN_EXTRA_CLANG_ARGS`
-  automatically (`just doctor` shows the value); when calling cargo directly, export
-  `BINDGEN_EXTRA_CLANG_ARGS="-I$(cc -print-file-name=include)"` yourself.
-- **Node ≥ 20 + pnpm** (or npm) to build the UI.
-- `just dist` requires **cargo-zigbuild + zig**.
-  `uv tool install cargo-zigbuild` (bundles zig via the `ziglang` package; expose it as
-  `zig` on `PATH`, e.g. a one-line shim running `python -m ziglang`).
+Raahi uses [Pingora](https://github.com/cloudflare/pingora) for proxying, Axum for the management API, and Svelte for the admin UI.
 
 ## Quick start
 
+### Prerequisites
+
+- Rust 1.84 or newer
+- Node.js 22.12 or newer
+- `cmake`, Go, Perl, and a C or C++ compiler
+- [`just`](https://just.systems/)
+- pnpm or npm
+
+On Debian or Ubuntu:
+
 ```bash
-# 1. Build the UI (served by the admin API in production)
-cd ui && pnpm install && pnpm build && cd ..
-
-# 2. Build and run the proxy (creates raahi.db, seeds a demo service + route)
-cargo run --release -- --seed
-
-# Proxy:     http://localhost:8080
-# Admin UI:  http://localhost:9080
+sudo apt install build-essential cmake golang perl
 ```
 
-Try it against two local upstreams:
+### Build and run
+
+```bash
+git clone https://github.com/iamd3vil/raahi.git
+cd raahi
+just setup
+just run-seed
+```
+
+Raahi starts these listeners by default:
+
+- HTTP proxy: `http://localhost:8080`
+- Admin UI and API: `http://localhost:9080`
+- HTTPS bind address: `0.0.0.0:8443`. TLS handshakes require a configured certificate.
+
+The `--seed` flag creates a route backed by `127.0.0.1:9001` and `127.0.0.1:9002`. Start two local servers and send requests through the proxy:
 
 ```bash
 python3 -m http.server 9001 &
 python3 -m http.server 9002 &
-curl localhost:8080/        # proxied + round-robined to :9001 / :9002
+
+curl http://localhost:8080/
+curl http://localhost:8080/
 ```
 
-## Release builds
+The requests alternate between the two targets.
+
+> [!IMPORTANT]
+> Management authentication is disabled until you create a user or admin token. The admin listener defaults to loopback. Configure authentication and network restrictions before exposing it to another machine.
+
+Read the [quick-start guide](https://raahi.sarat.dev/start-here/quickstart/) to create the first admin and continue configuring Raahi.
+
+## Build a release
+
+Build a release executable linked against the host libc:
 
 ```bash
-just release   # glibc build → target/release/raahi (dynamically linked to libc/libm)
-just dist      # fully static musl build → dist/raahi-v<version>-x86_64-unknown-linux-musl.tar.gz
+just release
+# target/release/raahi
 ```
 
-`just dist` cross-compiles BoringSSL for musl with zig (`cargo zigbuild`), strips the binary,
-and packages it with the built UI (`ui/build`, the binary's default `--ui-dir`) and this
-README. The result runs on any x86_64 Linux with no shared-library dependencies:
-`tar xzf raahi-v*.tar.gz && cd raahi-v*/ && ./raahi`.
+Build a static x86-64 Linux archive with the admin UI included:
+
+```bash
+uv tool install cargo-zigbuild
+just dist
+# dist/raahi-v<version>-x86_64-unknown-linux-musl.tar.gz
+```
+
+The static build also requires `zig` on `PATH`. See the [installation guide](https://raahi.sarat.dev/start-here/installation/) for setup details and the libclang `stddef.h` workaround.
+
+## Command line
+
+```text
+raahi [OPTIONS]
+  --db <URL>            SQLite URL             [env RAAHI_DB]
+  --http-addr <ADDR>    HTTP proxy listener override
+  --https-addr <ADDR>   HTTPS proxy listener override
+  --admin-addr <ADDR>   admin listener override
+  --ui-dir <DIR>        built admin UI         [env RAAHI_UI_DIR]
+  --threads <N>         proxy worker threads   [env RAAHI_THREADS]
+  --seed                create the demo service and route when the DB is empty
+```
+
+Use `RUST_LOG` to set log levels. The default is `info`.
+
+## Management API
+
+The JSON API lives under `/api/v1`. A running instance publishes:
+
+- OpenAPI document: `/openapi.yaml`
+- Interactive API reference: `/docs`
+- Health check: `/healthz`
+- Prometheus metrics: `/metrics`
+
+```bash
+curl -X POST http://127.0.0.1:9080/api/v1/services \
+  -H "Authorization: Bearer $RAAHI_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"name":"orders","protocol":"http"}'
+```
+
+PUT replaces the complete resource rather than applying a partial update. See the [API guide](https://raahi.sarat.dev/api/overview/) and [interactive reference](https://raahi.sarat.dev/api-reference/).
 
 ## Development
 
-Run the backend, then the UI dev server (it proxies `/api` and SSE to the admin port):
+Run the backend and UI development server in separate terminals:
 
 ```bash
-cargo run -- --seed          # backend on :8080 (proxy) and :9080 (admin)
-cd ui && pnpm dev            # UI with hot reload on http://localhost:5173
+just run-seed
 ```
-
-## CLI / configuration
-
-```
-raahi [OPTIONS]
-  --db <URL>            SQLite URL             [env RAAHI_DB]      (default sqlite://raahi.db)
-  --http-addr <ADDR>    proxy HTTP listener override
-  --https-addr <ADDR>   proxy HTTPS listener override
-  --admin-addr <ADDR>   admin API listener override
-  --ui-dir <DIR>        built UI to serve      [env RAAHI_UI_DIR]  (default ui/build)
-  --threads <N>         proxy worker threads   [env RAAHI_THREADS] (default all CPU cores)
-  --seed                seed a demo service + route if the DB is empty
-```
-
-Fresh databases default to `0.0.0.0:8080` for HTTP, `0.0.0.0:8443` for HTTPS,
-and `127.0.0.1:9080` for the admin API. CLI listener flags override persisted settings
-for the process. Set log filtering with `RUST_LOG` (default `info`).
-
-Listener addresses, the default LB algorithm, and the active TLS certificate live in the
-`settings` table (editable in the UI). Routes, services, plugins, consumers, and
-certificates are all managed via `/api/v1/*` and take effect immediately.
-
-The complete documentation site lives in [`site/`](site/) and is built with Astro Starlight.
-Run `cd site && npm install && npm run dev` for local documentation development.
-
-## Admin API (`/api/v1`)
-
-The complete OpenAPI 3.0 contract is served at [`/openapi.yaml`](http://localhost:9080/openapi.yaml),
-with an interactive reference at [`/docs`](http://localhost:9080/docs). See
-[`docs/API.md`](docs/API.md) for authentication, common workflows, and operational caveats.
-
-The API provides CRUD endpoints for `services`, `services/{id}/targets`, `targets/{id}`, `routes`,
-`plugins`, `consumers`, `consumers/{id}/credentials`, `credentials/{id}`, `certificates`, and
-`settings`. PUT replaces the complete resource rather than applying a partial update.
 
 ```bash
-curl -X POST localhost:9080/api/v1/services \
-  -H 'content-type: application/json' \
-  -d '{"name":"api","protocol":"http"}'
+just ui-dev
 ```
 
-## TLS notes
+Open `http://localhost:5173`. Vite forwards API and event requests to the management API on port 9080.
 
-Raahi terminates TLS with the **boringssl** backend, which supports **dynamic per-SNI
-certificate selection**: all configured certificates are loaded into memory and a single
-HTTPS listener serves the right one based on the SNI server name (exact or `*.wildcard`),
-falling back to the active/default certificate for non-SNI or unmatched requests. Upstream
-(proxy→backend) TLS is supported too.
+Useful checks:
 
-Use the UI to upload PEM material, create an ACME-managed certificate, replace or remove a certificate,
-or choose the default certificate. The running HTTPS listener picks changes up **live,
-with no restart**, including the first certificate issued after startup.
+```bash
+just fmt-check
+just clippy-strict
+just test
+just ui-check
+cd site && npm install && npm run build
+```
 
-ACME supports Let's Encrypt production/staging (the default), ZeroSSL, or a custom HTTPS directory. TLS-ALPN-01
-requires the requested domains to resolve to Raahi with public port 443 reachable. DNS-01
-uses a Cloudflare API token and is required for wildcard names. ZeroSSL uses DNS-01
-in Raahi and requires an EAB key ID and base64url HMAC key from its Developer dashboard
-for initial registration. Admins can save these in the certificate form; registered
-accounts are reused per directory. EAB credentials stay out of certificate responses
-and are included only in explicit secret exports. The background service issues
-missing certificates immediately, retries failures, scans every six hours, and renews within
-30 days of expiry. ACME account credentials, Cloudflare tokens, and certificate private keys
-stay in SQLite and memory, are never logged or returned by ordinary APIs, and are included only
-in exports made with `include_secrets=true`. Protect the database and secret exports accordingly.
+### Repository layout
 
-## Security notes
+| Path | Purpose |
+| --- | --- |
+| `crates/raahi-core` | Resource types, route matching, and active configuration |
+| `crates/raahi-store` | SQLite persistence, migrations, export, and import |
+| `crates/raahi-proxy` | HTTP and TCP proxying, plugins, health checks, metrics, and TLS |
+| `crates/raahi-api` | Management API, users, sessions, SSO, and admin UI serving |
+| `crates/raahi-acme` | ACME accounts, challenges, issuance, and renewal |
+| `ui/` | Svelte admin UI |
+| `site/` | Astro documentation site |
+| `docs/openapi.yaml` | OpenAPI 3.0 contract |
 
-- **Admin API authentication is off until configured.** It defaults to loopback and is
-  open until a user or admin token exists. Then callers need a session cookie (password
-  or SSO sign-in; `HttpOnly`, `SameSite=Lax`, `Secure` behind HTTPS) or the admin token
-  (`Authorization: Bearer ...` / `X-Admin-Token`). Roles gate what a session may do;
-  failed password logins are rate limited per client IP. Keep network controls in place
-  if the listener is exposed beyond localhost; `/healthz`, `/metrics`, `/openapi.yaml`,
-  `/docs`, `/api/v1/admin/status`, and the login/SSO endpoints intentionally remain public.
-- **User passwords are bcrypt-hashed**; session tokens are stored as SHA-256 hashes; the
-  SSO client secret lives in SQLite and is never returned by the API.
-- Basic-auth passwords are hashed with **bcrypt**; Basic/JWT secrets and TLS private keys
-  are not returned by ordinary resource APIs or written to logs. Key-auth API keys are
-  identifiers and are returned by credential listings, so protect those responses.
-- All database access uses **parameterized queries** (sqlx bind parameters).
-- Defaults follow least privilege (no permissive CORS on the admin API; loopback admin bind).
+## Current limits
 
-## Roadmap / out of scope
+- Raahi runs as a single node with a local SQLite database.
+- It does not synchronize configuration across instances.
+- It does not proxy gRPC traffic yet.
+- Adding, removing, or rebinding a TCP stream listener requires a restart. Retargeting an existing listener applies without a restart.
 
-- gRPC and multi-node config sync.
+## Contributing
+
+Issues and pull requests are welcome. For larger changes, open an issue first so the implementation and configuration model can be discussed before work begins.
+
+Please run the checks listed under [Development](#development) before opening a pull request.
+
+## License
+
+Copyright © 2026 Sarat Chandra.
+
+Raahi is licensed under the [GNU General Public License v3.0](LICENSE).

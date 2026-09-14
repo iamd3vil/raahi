@@ -1,6 +1,6 @@
 # Raahi documentation site
 
-The public documentation uses Astro and Starlight.
+The public documentation uses Astro and Starlight. Raahi itself is licensed under GPL-3.0-only.
 
 ```bash
 cd site

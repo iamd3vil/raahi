@@ -18,13 +18,13 @@ export default defineConfig({
       lastUpdated: true,
       social: [
         {
-          icon: 'gitlab',
+          icon: 'github',
           label: 'Source code',
-          href: 'https://git.simhadri.rocks/iamd3vil/raahi',
+          href: 'https://github.com/iamd3vil/raahi',
         },
       ],
       editLink: {
-        baseUrl: 'https://git.simhadri.rocks/iamd3vil/raahi/_edit/main/site/',
+        baseUrl: 'https://github.com/iamd3vil/raahi/edit/main/site/',
       },
       head: [
         { tag: 'meta', attrs: { name: 'theme-color', content: '#0b0d0c' } },

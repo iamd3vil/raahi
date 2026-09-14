@@ -3,6 +3,8 @@ name = "raahi-proxy"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 description = "Raahi data plane: the Pingora ProxyHttp implementation, plugins, and TLS"
 
 [dependencies]

@@ -3,6 +3,8 @@ name = "raahi-core"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 description = "Raahi core domain types, config snapshot, and router matching"
 
 [dependencies]

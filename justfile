@@ -2,7 +2,7 @@
 # Run `just` to see all recipes, or `just --list` for grouped output.
 # Requires: just, cargo/rustc ≥1.84, pnpm ≥9 (or npm), cmake + Go + Perl + C/C++ toolchain
 # For `just dist` (static musl binary): cargo-zigbuild + zig  →  `uv tool install cargo-zigbuild`
-# Docs: https://just.systems  |  Project: https://github.com/…/raahi
+# Docs: https://just.systems  |  Project: https://github.com/iamd3vil/raahi
 
 set shell := ["bash", "-cu"]
 set dotenv-load := false

@@ -2,7 +2,14 @@
 name = "raahi"
 version = "0.1.0"
 edition = "2024"
-description = "Raahi — a configurable reverse proxy built on Pingora"
+description = "A fast, self-hosted reverse proxy and API gateway"
+license = "GPL-3.0-only"
+homepage = "https://raahi.sarat.dev"
+documentation = "https://raahi.sarat.dev"
+repository = "https://github.com/iamd3vil/raahi"
+readme = "README.md"
+keywords = ["reverse-proxy", "api-gateway", "load-balancer", "pingora", "acme"]
+categories = ["web-programming::http-server"]
 default-run = "raahi"
 
 [[bin]]
@@ -31,7 +38,9 @@ members = ["crates/*"]
 [workspace.package]
 edition = "2024"
 version = "0.1.0"
-license = "MIT"
+license = "GPL-3.0-only"
+homepage = "https://raahi.sarat.dev"
+repository = "https://github.com/iamd3vil/raahi"
 
 [workspace.dependencies]
 raahi-core = { path = "crates/raahi-core" }

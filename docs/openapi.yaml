@@ -15,8 +15,8 @@ info:
     `editor` may mutate gateway configuration, `admin` may also manage users, SSO, the
     admin token, listener settings, and imports. Insufficient role returns 403.
   license:
-    name: MIT
-    url: https://opensource.org/license/mit
+    name: GPL-3.0-only
+    url: https://www.gnu.org/licenses/gpl-3.0.html
 servers:
   - url: /
     description: The Raahi admin listener serving this contract

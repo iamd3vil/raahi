@@ -3,6 +3,8 @@ name = "raahi-store"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 description = "Raahi config store: SQLite persistence and snapshot building"
 
 [dependencies]

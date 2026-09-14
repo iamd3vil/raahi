@@ -10,7 +10,7 @@ Raahi ships as one executable plus the built admin UI.
 ## Prerequisites
 
 - Rust 1.84 or newer to compile Raahi
-- Node.js 20 or newer
+- Node.js 22.12 or newer
 - `cmake`, Go, Perl, and a C or C++ compiler for native build dependencies
 - `just` for the repository recipes
 - pnpm or npm for the admin UI
@@ -34,7 +34,7 @@ Go and Perl run code generators while compiling the TLS library. The Raahi execu
 ## Build from source
 
 ```bash
-git clone https://git.simhadri.rocks/iamd3vil/raahi.git
+git clone https://github.com/iamd3vil/raahi.git
 cd raahi
 just setup
 just release

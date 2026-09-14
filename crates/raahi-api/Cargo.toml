@@ -3,6 +3,8 @@ name = "raahi-api"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 description = "Raahi control plane: admin REST API + UI serving as a Pingora background service"
 
 [dependencies]

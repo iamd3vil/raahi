@@ -3,6 +3,8 @@ name = "raahi-acme"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 description = "Automatic ACME certificate issuance and renewal for Raahi"
 
 [dependencies]
