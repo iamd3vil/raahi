@@ -59,6 +59,8 @@ Raahi uses [Pingora](https://github.com/cloudflare/pingora) for proxying, Axum f
 - [`just`](https://just.systems/)
 - pnpm or npm
 
+For the quickest install, use a release archive or the container image. See [Install a release](#install-a-release).
+
 On Debian or Ubuntu:
 
 ```bash
@@ -97,6 +99,35 @@ The requests alternate between the two targets.
 
 Read the [quick-start guide](https://raahi.sarat.dev/start-here/quickstart/) to create the first admin and continue configuring Raahi.
 
+## Install a release
+
+GitHub Releases publishes Linux archives for amd64 and arm64. Each archive contains the Raahi executable, admin UI, README, and license.
+
+```bash
+# Replace amd64 with arm64 when needed.
+curl -LO https://github.com/iamd3vil/raahi/releases/download/v0.1.0/raahi-v0.1.0-linux-amd64.tar.gz
+curl -LO https://github.com/iamd3vil/raahi/releases/download/v0.1.0/checksums.txt
+sha256sum -c checksums.txt --ignore-missing
+mkdir raahi-v0.1.0-linux-amd64
+
+tar xzf raahi-v0.1.0-linux-amd64.tar.gz -C raahi-v0.1.0-linux-amd64
+cd raahi-v0.1.0-linux-amd64
+./raahi --help
+```
+
+The multi-architecture container image is published to GitHub Container Registry:
+
+```bash
+docker run --rm \
+  -p 8080:8080 \
+  -p 8443:8443 \
+  -p 127.0.0.1:9080:9080 \
+  -v raahi-data:/data \
+  ghcr.io/iamd3vil/raahi:0.1.0
+```
+
+The container stores `raahi.db` in `/data` and serves the bundled admin UI. The command binds the admin listener inside the container and publishes it only on host loopback.
+
 ## Build a release
 
 Build a release executable linked against the host libc:
@@ -114,7 +145,7 @@ just dist
 # dist/raahi-v<version>-x86_64-unknown-linux-musl.tar.gz
 ```
 
-The static build also requires `zig` on `PATH`. See the [installation guide](https://raahi.sarat.dev/start-here/installation/) for setup details and the libclang `stddef.h` workaround.
+GitHub Actions builds release archives natively on dedicated amd64 and arm64 runners. Local `just dist` remains an x86-64 musl build for testing static packaging.
 
 ## Command line
 
@@ -185,6 +216,13 @@ cd site && npm install && npm run build
 | `ui/` | Svelte admin UI |
 | `site/` | Astro documentation site |
 | `docs/openapi.yaml` | OpenAPI 3.0 contract |
+
+## Release notes
+
+- First public release.
+- Native Linux archives for amd64 and arm64.
+- Multi-architecture container image at `ghcr.io/iamd3vil/raahi:0.1.0` and `ghcr.io/iamd3vil/raahi:latest`.
+- GitHub release publishing through [rlsr](https://rlsr.sarat.dev/).
 
 ## Current limits
 

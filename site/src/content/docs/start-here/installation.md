@@ -31,6 +31,35 @@ just doctor
 Go and Perl run code generators while compiling the TLS library. The Raahi executable does not require either runtime.
 :::
 
+## Install a release
+
+GitHub Releases publishes Linux archives for amd64 and arm64. The archive contains the executable, admin UI, README, and license.
+
+```bash
+# Replace amd64 with arm64 when needed.
+curl -LO https://github.com/iamd3vil/raahi/releases/download/v0.1.0/raahi-v0.1.0-linux-amd64.tar.gz
+curl -LO https://github.com/iamd3vil/raahi/releases/download/v0.1.0/checksums.txt
+sha256sum -c checksums.txt --ignore-missing
+mkdir raahi-v0.1.0-linux-amd64
+
+tar xzf raahi-v0.1.0-linux-amd64.tar.gz -C raahi-v0.1.0-linux-amd64
+cd raahi-v0.1.0-linux-amd64
+./raahi --help
+```
+
+Raahi also publishes a multi-architecture image for amd64 and arm64:
+
+```bash
+docker run --rm \
+  -p 8080:8080 \
+  -p 8443:8443 \
+  -p 127.0.0.1:9080:9080 \
+  -v raahi-data:/data \
+  ghcr.io/iamd3vil/raahi:0.1.0
+```
+
+The image stores the SQLite database in `/data`. It serves the bundled UI and binds the admin listener inside the container.
+
 ## Build from source
 
 ```bash
@@ -50,14 +79,14 @@ Run it from the repository root:
 
 ## Build a portable Linux archive
 
-`just dist` builds a static musl executable and packages it with the admin UI:
+`just dist` builds an x86-64 static musl executable and packages it with the admin UI for local testing:
 
 ```bash
 uv tool install cargo-zigbuild
 just dist
 ```
 
-The archive is written under `dist/`. It runs on x86-64 Linux without shared library dependencies. You need `zig` on `PATH` to build it.
+The archive is written under `dist/`. You need `zig` on `PATH` to build it. GitHub Releases uses native amd64 and arm64 runners instead of this local packaging recipe.
 
 ```bash
 tar xzf dist/raahi-v*-x86_64-unknown-linux-musl.tar.gz

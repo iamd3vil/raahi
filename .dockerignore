@@ -1,0 +1,9 @@
+target
+dist
+site/dist
+ui/build
+ui/node_modules
+.github
+*.db
+*.db-shm
+*.db-wal

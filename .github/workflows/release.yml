@@ -1,0 +1,278 @@
+name: Release
+run-name: Release ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vMAJOR.MINOR.PATCH tag to release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  REGISTRY_IMAGE: ghcr.io/iamd3vil/raahi
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+jobs:
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-24.04
+    outputs:
+      commit: ${{ steps.version.outputs.commit }}
+      date: ${{ steps.version.outputs.date }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - name: Check release tag and Cargo version
+        id: version
+        env:
+          TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "expected a vMAJOR.MINOR.PATCH tag, got: $TAG" >&2
+            exit 1
+          fi
+          version="${TAG#v}"
+          cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          if [[ "$cargo_version" != "$version" ]]; then
+            echo "tag $TAG does not match Cargo.toml version $cargo_version" >&2
+            exit 1
+          fi
+          if grep -R --line-number -E 'v?[0-9]+\.[0-9]+\.[0-9]+' README.md site/src/content/docs/start-here/installation.md .github/release-notes.tpl \
+            | grep -E 'raahi-v|ghcr\.io/iamd3vil/raahi:' \
+            | grep -v -F "$version" \
+            | grep -v -F '{{ meta.version }}' \
+            | grep -v -F '{{ meta.tag }}'; then
+            echo "release documentation contains a stale version" >&2
+            exit 1
+          fi
+          {
+            echo "commit=$(git rev-parse HEAD)"
+            echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+  linux:
+    name: Linux ${{ matrix.arch }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.arch }}
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake golang perl clang
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+      - name: Build admin UI
+        working-directory: ui
+        run: |
+          pnpm install --frozen-lockfile --ignore-workspace
+          pnpm --ignore-workspace run build
+      - name: Build Raahi
+        run: cargo build --locked --release
+      - name: Strip binary
+        run: strip target/release/raahi
+      - name: Package archive
+        run: bash scripts/package-release.sh target/release/raahi "${{ matrix.arch }}"
+      - name: Upload archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: raahi-${{ env.RELEASE_TAG }}-linux-${{ matrix.arch }}
+          path: dist/raahi-${{ env.RELEASE_TAG }}-linux-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  container:
+    name: Container ${{ matrix.arch }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Build and push image by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ matrix.platform }}
+          labels: |
+            org.opencontainers.image.created=${{ needs.prepare.outputs.date }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.commit }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.title=Raahi
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+          outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          build-args: SOURCE_REVISION=${{ needs.prepare.outputs.commit }}
+          cache-from: type=gha,scope=container-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=container-${{ matrix.arch }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          provenance: mode=max
+          sbom: true
+      - name: Export image digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+      - name: Upload image digest
+        uses: actions/upload-artifact@v7
+        with:
+          name: container-digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  container-manifest:
+    name: Publish container manifest
+    needs:
+      - prepare
+      - container
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download image digests
+        uses: actions/download-artifact@v8
+        with:
+          pattern: container-digest-*
+          path: /tmp/digests
+          merge-multiple: true
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Create multi-architecture image
+        working-directory: /tmp/digests
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          images=()
+          for digest in *; do
+            images+=("${REGISTRY_IMAGE}@sha256:${digest}")
+          done
+          docker buildx imagetools create \
+            --tag "${REGISTRY_IMAGE}:${VERSION}" \
+            --tag "${REGISTRY_IMAGE}:latest" \
+            "${images[@]}"
+          docker buildx imagetools inspect "${REGISTRY_IMAGE}:${VERSION}"
+
+  release:
+    name: Publish GitHub release
+    needs:
+      - prepare
+      - linux
+      - container-manifest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+      - name: Download release archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: raahi-${{ env.RELEASE_TAG }}-linux-*
+          path: release-assets
+          merge-multiple: true
+      - name: Publish with rlsr
+        uses: iamd3vil/rlsr/.github/actions/rlsr@v0.8.3
+        with:
+          config: rlsr.yml
+          publish: true
+          rm_dist: true
+          rlsr_version: v0.8.3
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          sed \
+            -e "s/{{ meta.tag }}/${RELEASE_TAG}/g" \
+            -e "s/{{ meta.version }}/${VERSION}/g" \
+            .github/release-notes.tpl > release-notes.md
+          gh release edit "$RELEASE_TAG" --notes-file release-notes.md
+      - name: Verify release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | sort)
+          expected=(
+            checksums.txt
+            "raahi-${RELEASE_TAG}-linux-amd64.tar.gz"
+            "raahi-${RELEASE_TAG}-linux-arm64.tar.gz"
+          )
+          diff -u <(printf '%s\n' "${expected[@]}" | sort) <(printf '%s\n' "${assets[@]}")

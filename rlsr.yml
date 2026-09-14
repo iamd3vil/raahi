@@ -1,0 +1,24 @@
+releases:
+  - name: "Raahi {{ meta.tag }}"
+    dist_folder: "./dist"
+    targets:
+      github:
+        owner: "iamd3vil"
+        repo: "raahi"
+    checksum:
+      algorithm: "sha256"
+    builds:
+      - name: "Collect Linux amd64 archive"
+        command: "test -f release-assets/raahi-{{ meta.tag }}-linux-amd64.tar.gz"
+        artifact: "release-assets/raahi-{{ meta.tag }}-linux-amd64.tar.gz"
+        archive_name: "raahi-{{ meta.tag }}-linux-amd64.tar.gz"
+        no_archive: true
+      - name: "Collect Linux arm64 archive"
+        command: "test -f release-assets/raahi-{{ meta.tag }}-linux-arm64.tar.gz"
+        artifact: "release-assets/raahi-{{ meta.tag }}-linux-arm64.tar.gz"
+        archive_name: "raahi-{{ meta.tag }}-linux-arm64.tar.gz"
+        no_archive: true
+
+changelog:
+  format: "github"
+  template: ".github/release-notes.tpl"
