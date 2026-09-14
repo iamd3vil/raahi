@@ -239,6 +239,7 @@ mod tests {
 
     fn svc(id: Id) -> Service {
         Service {
+            upstream_authority: None,
             id,
             name: format!("svc{id}"),
             protocol: Protocol::Http,

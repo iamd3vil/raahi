@@ -18,6 +18,7 @@ use pingora::services::background::background_service;
 use raahi_acme::{AcmeHandle, AcmeService};
 use raahi_api::ApiService;
 use raahi_core::{AlpnChallengeRegistry, RouteSpec, ServiceSpec, TargetSpec};
+use raahi_discovery::DiscoveryService;
 use raahi_proxy::{
     CertHandle, CertStore, HttpLogService, Metrics, RaahiProxy, StreamProxyApp, config_handle,
     log_channel, sni_tls_settings,
@@ -74,6 +75,7 @@ async fn seed(store: &Store) -> anyhow::Result<()> {
     }
     let svc = store
         .create_service(&ServiceSpec {
+            upstream_authority: None,
             name: "demo-service".into(),
             protocol: raahi_core::Protocol::Http,
             connect_timeout_ms: 2000,
@@ -90,6 +92,7 @@ async fn seed(store: &Store) -> anyhow::Result<()> {
             .create_target(
                 svc.id,
                 &TargetSpec {
+                    priority: 0,
                     host: "127.0.0.1".into(),
                     port,
                     weight: 100,
@@ -131,7 +134,7 @@ fn main() -> anyhow::Result<()> {
         .enable_all()
         .build()?;
 
-    let (snapshot, settings, cert_store) = setup_rt.block_on(async {
+    let (snapshot, settings, cert_store, store) = setup_rt.block_on(async {
         let store = Store::connect(&cli.db)
             .await
             .with_context(|| format!("open db {}", cli.db))?;
@@ -143,7 +146,7 @@ fn main() -> anyhow::Result<()> {
         // Load all certificates into an in-memory SNI store (boringssl serves them all).
         let certs = store.list_certificates().await?;
         let cert_store = CertStore::from_certs(certs, settings.active_certificate_id);
-        Ok::<_, anyhow::Error>((snapshot, settings, cert_store))
+        Ok::<_, anyhow::Error>((snapshot, settings, cert_store, store))
     })?;
     drop(setup_rt);
 
@@ -158,6 +161,8 @@ fn main() -> anyhow::Result<()> {
     let cert_handle = CertHandle::new(cert_store);
     let alpn_challenges = AlpnChallengeRegistry::default();
     let acme_handle = AcmeHandle::default();
+    let (discovery, discovery_handle, publisher, discovery_registry) =
+        DiscoveryService::new(cli.db.clone(), store, config.clone());
 
     let http_addr = cli
         .http_addr
@@ -228,12 +233,16 @@ fn main() -> anyhow::Result<()> {
         metrics: metrics.clone(),
         cert_handle: cert_handle.clone(),
         acme_handle: acme_handle.clone(),
+        discovery_handle: discovery_handle.clone(),
+        discovery_registry: discovery_registry.clone(),
+        publisher: publisher.clone(),
         ui_dir: Some(cli.ui_dir.clone()),
     };
     server.add_service(background_service("admin-api", api));
     info!("admin API on {admin_addr}");
 
     server.add_service(background_service("http-log", HttpLogService::new(log_rx)));
+    server.add_service(background_service("discovery", discovery));
 
     server.add_service(background_service(
         "acme",

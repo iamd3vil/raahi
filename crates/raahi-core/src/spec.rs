@@ -50,6 +50,8 @@ pub struct ServiceSpec {
     #[serde(default)]
     pub lb_algorithm: LbAlgorithm,
     #[serde(default)]
+    pub upstream_authority: Option<String>,
+    #[serde(default)]
     pub tls_sni: Option<String>,
     /// Optional HTTP health-check path (e.g. `/healthz`); unset = TCP check.
     #[serde(default)]
@@ -62,8 +64,32 @@ pub struct TargetSpec {
     pub port: u16,
     #[serde(default = "d_weight")]
     pub weight: u32,
+    #[serde(default)]
+    pub priority: u16,
     #[serde(default = "d_true")]
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverySourceSpec {
+    pub name: String,
+    pub provider: String,
+    #[serde(default = "d_obj")]
+    pub config: serde_json::Value,
+    #[serde(default = "d_true")]
+    pub enabled: bool,
+    #[serde(default = "d_stale_after")]
+    pub stale_after_ms: u64,
+    #[serde(default = "d_removal_grace")]
+    pub removal_grace_ms: u64,
+}
+
+fn d_stale_after() -> u64 {
+    300_000
+}
+
+fn d_removal_grace() -> u64 {
+    60_000
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,6 +204,8 @@ pub struct ImportDoc {
     #[serde(default)]
     pub services: Vec<ImportService>,
     #[serde(default)]
+    pub discovery_sources: Vec<ImportDiscoverySource>,
+    #[serde(default)]
     pub routes: Vec<Route>,
     #[serde(default)]
     pub stream_routes: Vec<StreamRoute>,
@@ -211,6 +239,12 @@ pub struct ImportAcmeAccount {
     #[serde(default)]
     pub email: Option<String>,
     pub credentials: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ImportDiscoverySource {
+    pub service_id: Id,
+    pub source: DiscoverySource,
 }
 
 #[derive(Debug, Clone, Deserialize)]

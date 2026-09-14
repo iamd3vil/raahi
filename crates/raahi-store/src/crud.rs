@@ -42,8 +42,8 @@ impl Store {
         let now = Utc::now().to_rfc3339();
         let res = sqlx::query(
             "INSERT INTO services (name, protocol, connect_timeout_ms, read_timeout_ms, \
-             write_timeout_ms, retries, lb_algorithm, tls_sni, health_path, created_at, updated_at) \
-             VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+             write_timeout_ms, retries, lb_algorithm, upstream_authority, tls_sni, health_path, created_at, updated_at) \
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(&s.name)
         .bind(s.protocol.as_str())
@@ -52,6 +52,7 @@ impl Store {
         .bind(s.write_timeout_ms as i64)
         .bind(s.retries as i64)
         .bind(s.lb_algorithm.as_str())
+        .bind(&s.upstream_authority)
         .bind(&s.tls_sni)
         .bind(&s.health_path)
         .bind(&now)
@@ -70,7 +71,7 @@ impl Store {
         let now = Utc::now().to_rfc3339();
         let res = sqlx::query(
             "UPDATE services SET name=?, protocol=?, connect_timeout_ms=?, read_timeout_ms=?, \
-             write_timeout_ms=?, retries=?, lb_algorithm=?, tls_sni=?, health_path=?, updated_at=? WHERE id=?",
+             write_timeout_ms=?, retries=?, lb_algorithm=?, upstream_authority=?, tls_sni=?, health_path=?, updated_at=? WHERE id=?",
         )
         .bind(&s.name)
         .bind(s.protocol.as_str())
@@ -79,6 +80,7 @@ impl Store {
         .bind(s.write_timeout_ms as i64)
         .bind(s.retries as i64)
         .bind(s.lb_algorithm.as_str())
+        .bind(&s.upstream_authority)
         .bind(&s.tls_sni)
         .bind(&s.health_path)
         .bind(&now)
@@ -130,12 +132,13 @@ impl Store {
         t: &TargetSpec,
     ) -> Result<Target, StoreError> {
         let res = sqlx::query(
-            "INSERT INTO targets (service_id, host, port, weight, enabled) VALUES (?,?,?,?,?)",
+            "INSERT INTO targets (service_id, host, port, weight, priority, enabled) VALUES (?,?,?,?,?,?)",
         )
         .bind(service_id)
         .bind(&t.host)
         .bind(t.port as i64)
         .bind(t.weight as i64)
+        .bind(t.priority as i64)
         .bind(t.enabled as i64)
         .execute(&self.pool)
         .await
@@ -148,15 +151,27 @@ impl Store {
         id: Id,
         t: &TargetSpec,
     ) -> Result<Option<Target>, StoreError> {
-        let res = sqlx::query("UPDATE targets SET host=?, port=?, weight=?, enabled=? WHERE id=?")
-            .bind(&t.host)
-            .bind(t.port as i64)
-            .bind(t.weight as i64)
-            .bind(t.enabled as i64)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_err)?;
+        if self
+            .get_target(id)
+            .await?
+            .is_some_and(|target| target.source_id.is_some())
+        {
+            return Err(StoreError::Invalid(
+                "discovered targets are managed by their discovery source".into(),
+            ));
+        }
+        let res = sqlx::query(
+            "UPDATE targets SET host=?, port=?, weight=?, priority=?, enabled=? WHERE id=?",
+        )
+        .bind(&t.host)
+        .bind(t.port as i64)
+        .bind(t.weight as i64)
+        .bind(t.priority as i64)
+        .bind(t.enabled as i64)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_err)?;
         if res.rows_affected() == 0 {
             return Ok(None);
         }
@@ -164,6 +179,15 @@ impl Store {
     }
 
     pub async fn delete_target(&self, id: Id) -> Result<bool, StoreError> {
+        if self
+            .get_target(id)
+            .await?
+            .is_some_and(|target| target.source_id.is_some())
+        {
+            return Err(StoreError::Invalid(
+                "discovered targets are managed by their discovery source".into(),
+            ));
+        }
         let res = sqlx::query("DELETE FROM targets WHERE id = ?")
             .bind(id)
             .execute(&self.pool)

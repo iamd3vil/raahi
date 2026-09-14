@@ -19,6 +19,7 @@ A **service** describes one upstream application. A **target** is a server that 
 | `retries` | Retry count | `1` |
 | `lb_algorithm` | Target selection strategy | `round_robin` |
 | `tls_sni` | SNI sent to HTTPS upstreams | target host |
+| `upstream_authority` | `Host` and `:authority` sent upstream | target host |
 | `health_path` | HTTP path for active checks | TCP connection check |
 
 ## Target fields
@@ -28,22 +29,27 @@ A **service** describes one upstream application. A **target** is a server that 
 | `host` | IP address or DNS name | required |
 | `port` | Upstream port | required |
 | `weight` | Share used by weighted balancing | `100` |
+| `priority` | Failover tier, lower is preferred | `0` |
 | `enabled` | Whether the target may receive traffic | `true` |
+
+A target created by a [discovery source](/concepts/service-discovery/) also reports `source_id`, `provider_key`, `state`, and any `metadata` the provider returned. Raahi owns those targets, so edit the source rather than the target.
+
+Raahi balances across the healthy targets that hold the lowest `priority` value and uses a higher value only when every target below it is unavailable. Weight applies within one priority.
 
 ## Load balancing
 
-- `round_robin` rotates through healthy targets.
+- `round_robin` rotates through healthy targets in the lowest available priority tier.
 - `weighted` gives targets traffic in proportion to their `weight` values.
 - `random` chooses a healthy target at random.
 - `consistent` hashes the client IP so the same client usually reaches the same target.
 
-Raahi sends traffic only to targets that are enabled and healthy.
+Raahi sends traffic only to targets that are enabled and healthy. If every target is unhealthy, Raahi returns an upstream-unavailable response instead of sending traffic to an ejected target.
 
 ## Health checks
 
 Without `health_path`, Raahi opens a TCP connection to test the target. With `health_path`, it sends an HTTP GET and accepts a 2xx or 3xx response. Checks for HTTPS services verify the upstream certificate.
 
-A hostname may resolve to several addresses. Raahi tests each address and uses one that works. It refreshes DNS every 30 seconds and keeps the previous addresses if a lookup fails.
+A hostname may resolve to several addresses. Raahi tests each address and uses one that works. It refreshes DNS every 30 seconds and keeps the previous addresses if a lookup fails. This is per-target address resolution, which is separate from a [discovery source](/concepts/service-discovery/) that decides which targets exist at all.
 
 HTTP proxying, TCP proxying, and health checks use the same selected address. A failed proxy connection removes the target before the next scheduled health check.
 

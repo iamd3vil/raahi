@@ -35,10 +35,15 @@ export interface Service {
   retries: number;
   lb_algorithm: LbAlgorithm;
   tls_sni: string | null;
+  /** Host/:authority sent upstream, overriding the target's host:port. */
+  upstream_authority: string | null;
   health_path: string | null;
   created_at: string;
   updated_at: string;
 }
+
+/** Lifecycle of a discovered target. Static targets are always `active`. */
+export type TargetState = 'active' | 'draining' | 'stale';
 
 export interface Target {
   id: number;
@@ -46,7 +51,110 @@ export interface Target {
   host: string;
   port: number;
   weight: number;
+  /** Failover tier: the lowest value with a healthy target wins. */
+  priority: number;
   enabled: boolean;
+  state: TargetState;
+  /** Discovery source that owns this target; null for operator-created ones. */
+  source_id: number | null;
+  /** Stable identity the provider reported, matched across refreshes. */
+  provider_key: string | null;
+  /** Labels the provider returned with the endpoint (zone, version, ...). */
+  metadata: Record<string, string>;
+  last_seen_at: string | null;
+  missing_since: string | null;
+}
+
+// ---- service discovery ----
+export type DiscoveryProviderId = 'dns' | 'dns-srv' | 'http';
+
+export const DISCOVERY_PROVIDERS: DiscoveryProviderId[] = ['dns', 'dns-srv', 'http'];
+
+export const DISCOVERY_PROVIDER_LABELS: Record<DiscoveryProviderId, string> = {
+  dns: 'DNS (A/AAAA)',
+  'dns-srv': 'DNS SRV',
+  http: 'HTTP registry',
+};
+
+/** Static provider metadata from GET /discovery/providers. */
+export interface DiscoveryProvider {
+  id: DiscoveryProviderId;
+  name: string;
+  description: string;
+  /** False = the config's port/weight/priority applies to every endpoint. */
+  supplies_port: boolean;
+  supplies_weight: boolean;
+  supplies_priority: boolean;
+  config_schema: Record<string, unknown>;
+  defaults: Record<string, unknown>;
+}
+
+/** Scheduling and endpoint defaults shared by every provider config. */
+export interface DiscoveryConfigCommon {
+  interval_ms: number;
+  timeout_ms: number;
+  port?: number | null;
+  weight: number;
+  priority: number;
+}
+
+export interface DnsDiscoveryConfig extends DiscoveryConfigCommon {
+  hostname: string;
+  record_types: ('a' | 'aaaa')[];
+  resolver?: string | null;
+}
+
+export interface DnsSrvDiscoveryConfig extends DiscoveryConfigCommon {
+  service_name: string;
+  resolver?: string | null;
+  use_record_weight: boolean;
+  use_record_priority: boolean;
+}
+
+export interface HttpDiscoveryConfig extends DiscoveryConfigCommon {
+  url: string;
+  headers: Record<string, string>;
+  /** Dot path to the endpoint array when it isn't at the document root. */
+  endpoints_path?: string | null;
+  tls_verify: boolean;
+}
+
+export type DiscoveryConfig = DnsDiscoveryConfig | DnsSrvDiscoveryConfig | HttpDiscoveryConfig;
+
+/** Request body for creating/replacing a discovery source. */
+export interface DiscoverySourceInput {
+  name: string;
+  provider: DiscoveryProviderId;
+  config: DiscoveryConfig;
+  enabled: boolean;
+  /** How long the last known good endpoints stay trusted once refreshes fail. */
+  stale_after_ms: number;
+  /** How long a vanished target drains before deletion. */
+  removal_grace_ms: number;
+}
+
+export interface DiscoverySource extends DiscoverySourceInput {
+  id: number;
+  service_id: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type DiscoveryState = 'pending' | 'healthy' | 'failing' | 'stale' | 'disabled';
+
+export interface DiscoverySourceStatus {
+  source_id: number;
+  state: DiscoveryState;
+  last_attempt_at: string | null;
+  last_success_at: string | null;
+  next_refresh_at: string | null;
+  /** Opaque provider or endpoint-set revision; null until the first success. */
+  revision: string | null;
+  endpoint_count: number;
+  active_count: number;
+  draining_count: number;
+  stale_count: number;
+  last_error: string | null;
 }
 
 export interface Route {
@@ -170,6 +278,7 @@ export interface WasmModule {
 export interface ImportReport {
   services: number;
   targets: number;
+  discovery_sources: number;
   routes: number;
   plugins: number;
   consumers: number;

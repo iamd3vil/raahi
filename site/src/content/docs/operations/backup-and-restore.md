@@ -15,7 +15,7 @@ curl -fsS http://127.0.0.1:9080/api/v1/export \
   -o raahi-export.json
 ```
 
-The default export omits private keys and other secret values.
+The default export omits private keys and other secret values. It includes discovery source configuration, but not the targets currently materialized from those sources. Providers repopulate those targets after restore.
 
 ## Export a restorable copy
 
@@ -28,7 +28,7 @@ curl -fsS 'http://127.0.0.1:9080/api/v1/export?include_secrets=true' \
 chmod 600 raahi-export-secrets.json
 ```
 
-This file may contain TLS private keys, ACME account credentials, Cloudflare and EAB credentials, consumer secrets, and other sensitive values.
+This file may contain TLS private keys, ACME account credentials, Cloudflare and EAB credentials, consumer secrets, HTTP discovery headers, and other sensitive values.
 
 ## Import an export
 

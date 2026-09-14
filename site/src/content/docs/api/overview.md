@@ -20,6 +20,7 @@ A running instance publishes:
 | --- | --- |
 | Applications | Create an upstream, target, domain route, and optional HTTPS policy together |
 | Services and targets | Define upstream applications and their servers |
+| Service discovery | Fill a service's targets from DNS, SRV records, or an HTTP registry |
 | Routes and stream routes | Match HTTP traffic or open TCP listeners |
 | Plugins | Add authentication, access rules, limits, caching, and transforms |
 | Consumers and credentials | Identify clients that use proxied APIs |

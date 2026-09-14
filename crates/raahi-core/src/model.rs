@@ -86,8 +86,12 @@ pub struct Service {
     pub write_timeout_ms: u64,
     pub retries: u32,
     pub lb_algorithm: LbAlgorithm,
-    /// SNI to present to the upstream when `protocol = https`. Falls back to the
-    /// target host when unset.
+    /// HTTP authority sent to upstreams when the route does not preserve the
+    /// incoming Host header. Falls back to the target host when unset.
+    #[serde(default)]
+    pub upstream_authority: Option<String>,
+    /// SNI to present to the upstream when `protocol = https`. Falls back to
+    /// `upstream_authority`, then the target host.
     pub tls_sni: Option<String>,
     /// Active health check: GET this path on each target (healthy = 2xx/3xx).
     /// `None` = plain TCP-connect check. HTTPS services use verified HTTPS probes.
@@ -95,6 +99,35 @@ pub struct Service {
     pub health_path: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// Lifecycle state for a discovery-managed target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TargetState {
+    #[default]
+    Active,
+    Draining,
+    Stale,
+}
+
+impl TargetState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Draining => "draining",
+            Self::Stale => "stale",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "active" => Some(Self::Active),
+            "draining" => Some(Self::Draining),
+            "stale" => Some(Self::Stale),
+            _ => None,
+        }
+    }
 }
 
 /// A concrete backend (host:port) belonging to a [`Service`].
@@ -105,7 +138,103 @@ pub struct Target {
     pub host: String,
     pub port: u16,
     pub weight: u32,
+    /// Lower values are preferred. Load balancing happens within the lowest
+    /// priority tier that contains a healthy target.
+    #[serde(default)]
+    pub priority: u16,
     pub enabled: bool,
+    /// `None` for manual targets; set for targets owned by discovery.
+    #[serde(default)]
+    pub source_id: Option<Id>,
+    /// Stable endpoint identity supplied by the discovery provider.
+    #[serde(default)]
+    pub provider_key: Option<String>,
+    /// `active`, `draining`, or `stale` for discovered targets.
+    #[serde(default)]
+    pub state: TargetState,
+    #[serde(default)]
+    pub metadata: BTreeMap<String, String>,
+    #[serde(default)]
+    pub last_seen_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub missing_since: Option<DateTime<Utc>>,
+}
+
+/// A configured source that discovers targets for one service.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverySource {
+    pub id: Id,
+    pub service_id: Id,
+    pub name: String,
+    pub provider: String,
+    pub config: serde_json::Value,
+    pub enabled: bool,
+    pub stale_after_ms: u64,
+    pub removal_grace_ms: u64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Operational state for a discovery source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum DiscoveryState {
+    #[default]
+    Pending,
+    Healthy,
+    Failing,
+    Stale,
+    Disabled,
+}
+
+impl DiscoveryState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Healthy => "healthy",
+            Self::Failing => "failing",
+            Self::Stale => "stale",
+            Self::Disabled => "disabled",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "pending" => Some(Self::Pending),
+            "healthy" => Some(Self::Healthy),
+            "failing" => Some(Self::Failing),
+            "stale" => Some(Self::Stale),
+            "disabled" => Some(Self::Disabled),
+            _ => None,
+        }
+    }
+}
+
+/// Persisted operational state for a discovery source.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoverySourceStatus {
+    pub source_id: Id,
+    pub state: DiscoveryState,
+    pub last_attempt_at: Option<DateTime<Utc>>,
+    pub last_success_at: Option<DateTime<Utc>>,
+    pub next_refresh_at: Option<DateTime<Utc>>,
+    pub revision: Option<String>,
+    pub endpoint_count: u64,
+    pub active_count: u64,
+    pub draining_count: u64,
+    pub stale_count: u64,
+    pub last_error: Option<String>,
+}
+
+/// One endpoint returned by a discovery provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveredEndpoint {
+    pub key: String,
+    pub host: String,
+    pub port: u16,
+    pub weight: u32,
+    pub priority: u16,
+    pub metadata: BTreeMap<String, String>,
 }
 
 /// A request matcher that binds incoming traffic to a [`Service`].

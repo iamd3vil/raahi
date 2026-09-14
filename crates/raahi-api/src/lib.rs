@@ -19,6 +19,7 @@ use axum::routing::get;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
 use raahi_acme::AcmeHandle;
+use raahi_discovery::{ConfigPublisher, DiscoveryHandle, DiscoveryRegistry};
 use raahi_proxy::{CertHandle, CertStore, ConfigHandle, Metrics};
 use raahi_store::Store;
 use tower_http::services::{ServeDir, ServeFile};
@@ -36,6 +37,9 @@ pub struct AppState {
     pub metrics: Arc<Metrics>,
     pub cert_handle: CertHandle,
     pub acme_handle: AcmeHandle,
+    pub discovery_handle: DiscoveryHandle,
+    pub discovery_registry: DiscoveryRegistry,
+    pub publisher: ConfigPublisher,
     pub ui_dir: Option<PathBuf>,
     /// Live auth configuration (admin token hash, user presence, SSO settings).
     pub auth: Arc<AuthState>,
@@ -43,9 +47,11 @@ pub struct AppState {
 
 /// Rebuild the config snapshot from the store and atomically swap it into the proxy.
 pub async fn reload(state: &AppState) -> ApiResult<()> {
-    let snap = state.store.build_snapshot().await?;
-    state.config.store(snap);
-    Ok(())
+    state
+        .publisher
+        .publish()
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))
 }
 
 /// Rebuild the in-memory certificate store from the DB and swap it into the live TLS
@@ -109,6 +115,25 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/targets/{id}",
             axum::routing::put(update_target).delete(delete_target),
+        )
+        .route("/discovery/providers", get(discovery_providers))
+        .route(
+            "/services/{id}/discovery-sources",
+            get(list_discovery_sources).post(create_discovery_source),
+        )
+        .route(
+            "/discovery-sources/{id}",
+            get(get_discovery_source)
+                .put(update_discovery_source)
+                .delete(delete_discovery_source),
+        )
+        .route(
+            "/discovery-sources/{id}/refresh",
+            axum::routing::post(refresh_discovery_source),
+        )
+        .route(
+            "/discovery-sources/{id}/status",
+            get(discovery_source_status),
         )
         .route("/routes", get(list_routes).post(create_route))
         .route(
@@ -242,6 +267,9 @@ pub struct ApiService {
     pub metrics: Arc<Metrics>,
     pub cert_handle: CertHandle,
     pub acme_handle: AcmeHandle,
+    pub discovery_handle: DiscoveryHandle,
+    pub discovery_registry: DiscoveryRegistry,
+    pub publisher: ConfigPublisher,
     pub ui_dir: Option<PathBuf>,
 }
 
@@ -256,8 +284,8 @@ impl BackgroundService for ApiService {
             }
         };
         // Refresh the snapshot once on startup so the proxy reflects current state.
-        if let Ok(snap) = store.build_snapshot().await {
-            self.config.store(snap);
+        if let Err(error) = self.publisher.publish().await {
+            error!("admin API: initial config publish failed: {error}");
         }
 
         // Load auth state once; the guard middleware reads the live handles.
@@ -283,6 +311,9 @@ impl BackgroundService for ApiService {
             metrics: self.metrics.clone(),
             cert_handle: self.cert_handle.clone(),
             acme_handle: self.acme_handle.clone(),
+            discovery_handle: self.discovery_handle.clone(),
+            discovery_registry: self.discovery_registry.clone(),
+            publisher: self.publisher.clone(),
             ui_dir: self.ui_dir.clone(),
             auth,
         };
