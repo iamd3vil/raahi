@@ -1,6 +1,8 @@
 //! Row → domain-model mapping helpers. We use runtime queries (not the compile-time
 //! `query!` macros) so the build needs no live database.
 
+use std::str::FromStr;
+
 use chrono::{DateTime, NaiveDateTime, Utc};
 use raahi_core::*;
 use sqlx::Row;

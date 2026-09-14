@@ -487,12 +487,8 @@ fn validate_plugin(spec: &PluginSpec) -> ApiResult<()> {
             }
         }
         PluginType::IpRestriction => {
-            let both_empty = spec.config["allow"]
-                .as_array()
-                .map_or(true, |a| a.is_empty())
-                && spec.config["deny"]
-                    .as_array()
-                    .map_or(true, |a| a.is_empty());
+            let both_empty = spec.config["allow"].as_array().is_none_or(|a| a.is_empty())
+                && spec.config["deny"].as_array().is_none_or(|a| a.is_empty());
             if both_empty {
                 return Err(ApiError::BadRequest(
                     "ip-restriction needs at least one allow or deny entry".into(),
@@ -542,7 +538,7 @@ fn validate_plugin(spec: &PluginSpec) -> ApiResult<()> {
         PluginType::ResponseBodyTransform => {
             let empty = spec.config["replace"]
                 .as_array()
-                .map_or(true, |a| a.is_empty());
+                .is_none_or(|a| a.is_empty());
             if empty {
                 return Err(ApiError::BadRequest(
                     "response-body-transform needs at least one replace entry".into(),

@@ -39,13 +39,13 @@ pub fn key_auth(
             break;
         }
     }
-    if key.is_none() {
-        if let Some(q) = input.query {
-            for (k, v) in parse_query(q) {
-                if c.key_names.iter().any(|n| n.eq_ignore_ascii_case(&k)) {
-                    key = Some(v);
-                    break;
-                }
+    if key.is_none()
+        && let Some(q) = input.query
+    {
+        for (k, v) in parse_query(q) {
+            if c.key_names.iter().any(|n| n.eq_ignore_ascii_case(&k)) {
+                key = Some(v);
+                break;
             }
         }
     }
@@ -184,13 +184,13 @@ pub fn jwt_auth(c: &JwtCfg, input: &ReqInput, cfg: &ProxyConfig, effects: &mut E
                 .or_else(|| v.strip_prefix("bearer "))
                 .map(|t| t.trim().to_string())
         });
-    if token.is_none() {
-        if let Some(q) = input.query {
-            for (k, v) in parse_query(q) {
-                if c.uri_param_names.iter().any(|n| n.eq_ignore_ascii_case(&k)) {
-                    token = Some(v);
-                    break;
-                }
+    if token.is_none()
+        && let Some(q) = input.query
+    {
+        for (k, v) in parse_query(q) {
+            if c.uri_param_names.iter().any(|n| n.eq_ignore_ascii_case(&k)) {
+                token = Some(v);
+                break;
             }
         }
     }

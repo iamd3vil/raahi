@@ -226,37 +226,36 @@ pub fn check(cfg: &CacheCfg, input: &ReqInput, effects: &mut Effects) -> Action 
         input.host,
         input.path
     );
-    if cfg.cache_key_query {
-        if let Some(q) = input.query {
-            key.push('?');
-            key.push_str(q);
-        }
+    if cfg.cache_key_query
+        && let Some(q) = input.query
+    {
+        key.push('?');
+        key.push_str(q);
     }
 
-    if let Some(e) = cache().lock().unwrap().entries.get(&key) {
-        if e.expires_at > Instant::now() {
-            let mut headers = e.headers.clone();
-            let initial_age = headers
-                .iter()
-                .find(|(k, _)| k.eq_ignore_ascii_case("age"))
-                .and_then(|(_, v)| v.parse::<u64>().ok())
-                .unwrap_or(0);
-            headers.retain(|(k, _)| {
-                !k.eq_ignore_ascii_case("age") && !k.eq_ignore_ascii_case("x-cache")
-            });
-            headers.push((
-                "age".into(),
-                initial_age
-                    .saturating_add(e.stored_at.elapsed().as_secs())
-                    .to_string(),
-            ));
-            headers.push(("x-cache".into(), "HIT".into()));
-            return Action::Respond(ShortResp {
-                status: e.status,
-                headers,
-                body: e.body.clone(),
-            });
-        }
+    if let Some(e) = cache().lock().unwrap().entries.get(&key)
+        && e.expires_at > Instant::now()
+    {
+        let mut headers = e.headers.clone();
+        let initial_age = headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("age"))
+            .and_then(|(_, v)| v.parse::<u64>().ok())
+            .unwrap_or(0);
+        headers
+            .retain(|(k, _)| !k.eq_ignore_ascii_case("age") && !k.eq_ignore_ascii_case("x-cache"));
+        headers.push((
+            "age".into(),
+            initial_age
+                .saturating_add(e.stored_at.elapsed().as_secs())
+                .to_string(),
+        ));
+        headers.push(("x-cache".into(), "HIT".into()));
+        return Action::Respond(ShortResp {
+            status: e.status,
+            headers,
+            body: e.body.clone(),
+        });
     }
 
     effects.cache_store = Some(CacheIntent {

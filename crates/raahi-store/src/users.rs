@@ -14,7 +14,7 @@ fn map_user(r: &SqliteRow) -> User {
         id: r.get("id"),
         email: r.get("email"),
         name: r.get("name"),
-        role: Role::from_str(&r.get::<String, _>("role")).unwrap_or(Role::Viewer),
+        role: r.get::<String, _>("role").parse().unwrap_or(Role::Viewer),
         has_password: r.get::<Option<String>, _>("password_hash").is_some(),
         created_at: parse_dt(&r.get::<String, _>("created_at")),
         last_login_at: r

@@ -4,7 +4,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::Id;
+use crate::{Id, ParseError};
 
 /// Access level for the admin API. Ordered: `Viewer < Editor < Admin`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -26,12 +26,16 @@ impl Role {
             Role::Admin => "admin",
         }
     }
-    pub fn from_str(s: &str) -> Option<Self> {
+}
+
+impl std::str::FromStr for Role {
+    type Err = ParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "viewer" => Some(Role::Viewer),
-            "editor" => Some(Role::Editor),
-            "admin" => Some(Role::Admin),
-            _ => None,
+            "viewer" => Ok(Role::Viewer),
+            "editor" => Ok(Role::Editor),
+            "admin" => Ok(Role::Admin),
+            _ => Err(ParseError),
         }
     }
 }
@@ -101,8 +105,8 @@ mod tests {
     fn roles_are_ordered() {
         assert!(Role::Viewer < Role::Editor);
         assert!(Role::Editor < Role::Admin);
-        assert_eq!(Role::from_str("editor"), Some(Role::Editor));
-        assert_eq!(Role::from_str("root"), None);
+        assert_eq!("editor".parse::<Role>(), Ok(Role::Editor));
+        assert!("root".parse::<Role>().is_err());
     }
 
     #[test]

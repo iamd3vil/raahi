@@ -109,14 +109,13 @@ impl CertStore {
         if self.entries.is_empty() {
             return None;
         }
-        if let Some(name) = sni {
-            if let Some(e) = self
+        if let Some(name) = sni
+            && let Some(e) = self
                 .entries
                 .iter()
                 .find(|e| e.sni.iter().any(|p| host_matches(p, name)))
-            {
-                return Some(e);
-            }
+        {
+            return Some(e);
         }
         self.entries.get(self.default_idx)
     }
@@ -198,6 +197,29 @@ impl TlsAccept for SniResolver {
     }
 }
 
+/// Build TLS settings that select a certificate per SNI from the live `handle`.
+pub fn sni_tls_settings(
+    handle: CertHandle,
+    challenges: AlpnChallengeRegistry,
+) -> Result<TlsSettings, String> {
+    let active_challenges = challenges.clone();
+    let cb: TlsAcceptCallbacks = Box::new(SniResolver { handle, challenges });
+    let mut settings = TlsSettings::with_callbacks(cb).map_err(|e| format!("tls settings: {e}"))?;
+    settings.set_alpn_select_callback(move |ssl, client| {
+        let has_challenge = ssl
+            .servername(NameType::HOST_NAME)
+            .and_then(|domain| active_challenges.get(domain))
+            .is_some();
+        let preference = if has_challenge {
+            SERVER_ALPN_PREFERENCE
+        } else {
+            HTTP_ALPN_PREFERENCE
+        };
+        select_next_proto(preference, client).ok_or(AlpnError::NOACK)
+    });
+    Ok(settings)
+}
+
 #[cfg(test)]
 mod tests {
     use raahi_core::Certificate;
@@ -233,27 +255,4 @@ mod tests {
         assert_eq!(store.entries.len(), 1);
         assert_eq!(store.entries[0].chain.len(), 1);
     }
-}
-
-/// Build TLS settings that select a certificate per SNI from the live `handle`.
-pub fn sni_tls_settings(
-    handle: CertHandle,
-    challenges: AlpnChallengeRegistry,
-) -> Result<TlsSettings, String> {
-    let active_challenges = challenges.clone();
-    let cb: TlsAcceptCallbacks = Box::new(SniResolver { handle, challenges });
-    let mut settings = TlsSettings::with_callbacks(cb).map_err(|e| format!("tls settings: {e}"))?;
-    settings.set_alpn_select_callback(move |ssl, client| {
-        let has_challenge = ssl
-            .servername(NameType::HOST_NAME)
-            .and_then(|domain| active_challenges.get(domain))
-            .is_some();
-        let preference = if has_challenge {
-            SERVER_ALPN_PREFERENCE
-        } else {
-            HTTP_ALPN_PREFERENCE
-        };
-        select_next_proto(preference, client).ok_or(AlpnError::NOACK)
-    });
-    Ok(settings)
 }

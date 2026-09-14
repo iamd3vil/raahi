@@ -308,7 +308,7 @@ impl Store {
                 let ctype = cr["type"].as_str().unwrap_or("");
                 let identifier = cr["identifier"].as_str().unwrap_or("");
                 let secret = cr["secret"].as_str();
-                if identifier.is_empty() || CredentialType::from_str(ctype).is_none() {
+                if identifier.is_empty() || ctype.parse::<CredentialType>().is_err() {
                     report
                         .skipped
                         .push(format!("credential for '{}': malformed", c.username));

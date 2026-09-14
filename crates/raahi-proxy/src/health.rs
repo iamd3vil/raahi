@@ -252,6 +252,33 @@ impl HealthService {
     }
 }
 
+#[async_trait]
+impl BackgroundService for HealthService {
+    async fn start(&self, mut shutdown: ShutdownWatch) {
+        // Per-target consecutive (failures, passes).
+        let mut streaks: HashMap<Id, (u32, u32)> = HashMap::new();
+        let mut tick = tokio::time::interval(self.interval);
+        let mut dns_tick = tokio::time::interval(Duration::from_secs(30));
+        loop {
+            tokio::select! {
+                _ = shutdown.changed() => break,
+                _ = tick.tick() => {
+                    tokio::select! {
+                        _ = shutdown.changed() => break,
+                        _ = self.run_checks(&mut streaks) => {}
+                    }
+                },
+                _ = dns_tick.tick() => {
+                    tokio::select! {
+                        _ = shutdown.changed() => break,
+                        _ = self.refresh_dns() => {}
+                    }
+                },
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,32 +378,5 @@ mod tests {
         let p = probe(vec![dead_addr().await], 0);
         assert!(!elect_and_probe(&p, Duration::from_secs(1)).await);
         assert!(!elect_and_probe(&probe(vec![], 0), Duration::from_secs(1)).await);
-    }
-}
-
-#[async_trait]
-impl BackgroundService for HealthService {
-    async fn start(&self, mut shutdown: ShutdownWatch) {
-        // Per-target consecutive (failures, passes).
-        let mut streaks: HashMap<Id, (u32, u32)> = HashMap::new();
-        let mut tick = tokio::time::interval(self.interval);
-        let mut dns_tick = tokio::time::interval(Duration::from_secs(30));
-        loop {
-            tokio::select! {
-                _ = shutdown.changed() => break,
-                _ = tick.tick() => {
-                    tokio::select! {
-                        _ = shutdown.changed() => break,
-                        _ = self.run_checks(&mut streaks) => {}
-                    }
-                },
-                _ = dns_tick.tick() => {
-                    tokio::select! {
-                        _ = shutdown.changed() => break,
-                        _ = self.refresh_dns() => {}
-                    }
-                },
-            }
-        }
     }
 }

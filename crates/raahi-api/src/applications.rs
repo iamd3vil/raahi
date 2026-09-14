@@ -90,7 +90,8 @@ mod tests {
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut buf = [0; 4096];
-            stream.read(&mut buf).await.unwrap();
+            let read = stream.read(&mut buf).await.unwrap();
+            assert!(read > 0, "client closed before sending a request");
             stream.write_all(b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/\r\nContent-Length: 0\r\n\r\n").await.unwrap();
         });
         let Json(result) = test_upstream(Json(ProbeRequest {

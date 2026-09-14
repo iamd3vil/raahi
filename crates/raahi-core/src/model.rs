@@ -9,6 +9,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::Id;
 
+/// Error returned when parsing an enum from a string fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseError;
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("unknown variant")
+    }
+}
+
+impl std::error::Error for ParseError {}
+
 /// Upstream wire protocol for a service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -24,13 +36,6 @@ impl Protocol {
             Protocol::Https => "https",
         }
     }
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "http" => Some(Protocol::Http),
-            "https" => Some(Protocol::Https),
-            _ => None,
-        }
-    }
     pub fn is_tls(self) -> bool {
         matches!(self, Protocol::Https)
     }
@@ -38,6 +43,17 @@ impl Protocol {
         match self {
             Protocol::Http => 80,
             Protocol::Https => 443,
+        }
+    }
+}
+
+impl std::str::FromStr for Protocol {
+    type Err = ParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "http" => Ok(Protocol::Http),
+            "https" => Ok(Protocol::Https),
+            _ => Err(ParseError),
         }
     }
 }
@@ -64,13 +80,17 @@ impl LbAlgorithm {
             LbAlgorithm::Weighted => "weighted",
         }
     }
-    pub fn from_str(s: &str) -> Option<Self> {
+}
+
+impl std::str::FromStr for LbAlgorithm {
+    type Err = ParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "round_robin" => Some(LbAlgorithm::RoundRobin),
-            "random" => Some(LbAlgorithm::Random),
-            "consistent" => Some(LbAlgorithm::Consistent),
-            "weighted" => Some(LbAlgorithm::Weighted),
-            _ => None,
+            "round_robin" => Ok(LbAlgorithm::RoundRobin),
+            "random" => Ok(LbAlgorithm::Random),
+            "consistent" => Ok(LbAlgorithm::Consistent),
+            "weighted" => Ok(LbAlgorithm::Weighted),
+            _ => Err(ParseError),
         }
     }
 }
@@ -336,36 +356,40 @@ impl PluginType {
             PluginType::ResponseCompression => "response-compression",
         }
     }
-    pub fn from_str(s: &str) -> Option<Self> {
-        Some(match s {
-            "key-auth" => PluginType::KeyAuth,
-            "basic-auth" => PluginType::BasicAuth,
-            "jwt" => PluginType::Jwt,
-            "acl" => PluginType::Acl,
-            "ip-restriction" => PluginType::IpRestriction,
-            "rate-limit" => PluginType::RateLimit,
-            "proxy-cache" => PluginType::ProxyCache,
-            "request-size-limit" => PluginType::RequestSizeLimit,
-            "request-termination" => PluginType::RequestTermination,
-            "redirect" => PluginType::Redirect,
-            "cors" => PluginType::Cors,
-            "wasm" => PluginType::Wasm,
-            "request-transform" => PluginType::RequestTransform,
-            "response-transform" => PluginType::ResponseTransform,
-            "hsts" => PluginType::Hsts,
-            "response-body-transform" => PluginType::ResponseBodyTransform,
-            "http-log" => PluginType::HttpLog,
-            "request-id" => PluginType::RequestId,
-            "response-compression" => PluginType::ResponseCompression,
-            _ => return None,
-        })
-    }
     /// Whether this plugin authenticates the request (sets a consumer).
     pub fn is_auth(self) -> bool {
         matches!(
             self,
             PluginType::KeyAuth | PluginType::BasicAuth | PluginType::Jwt
         )
+    }
+}
+
+impl std::str::FromStr for PluginType {
+    type Err = ParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "key-auth" => Ok(PluginType::KeyAuth),
+            "basic-auth" => Ok(PluginType::BasicAuth),
+            "jwt" => Ok(PluginType::Jwt),
+            "acl" => Ok(PluginType::Acl),
+            "ip-restriction" => Ok(PluginType::IpRestriction),
+            "rate-limit" => Ok(PluginType::RateLimit),
+            "proxy-cache" => Ok(PluginType::ProxyCache),
+            "request-size-limit" => Ok(PluginType::RequestSizeLimit),
+            "request-termination" => Ok(PluginType::RequestTermination),
+            "redirect" => Ok(PluginType::Redirect),
+            "cors" => Ok(PluginType::Cors),
+            "wasm" => Ok(PluginType::Wasm),
+            "request-transform" => Ok(PluginType::RequestTransform),
+            "response-transform" => Ok(PluginType::ResponseTransform),
+            "hsts" => Ok(PluginType::Hsts),
+            "response-body-transform" => Ok(PluginType::ResponseBodyTransform),
+            "http-log" => Ok(PluginType::HttpLog),
+            "request-id" => Ok(PluginType::RequestId),
+            "response-compression" => Ok(PluginType::ResponseCompression),
+            _ => Err(ParseError),
+        }
     }
 }
 
@@ -386,13 +410,17 @@ impl PluginScope {
             PluginScope::Route => "route",
         }
     }
-    pub fn from_str(s: &str) -> Option<Self> {
-        Some(match s {
-            "global" => PluginScope::Global,
-            "service" => PluginScope::Service,
-            "route" => PluginScope::Route,
-            _ => return None,
-        })
+}
+
+impl std::str::FromStr for PluginScope {
+    type Err = ParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "global" => Ok(PluginScope::Global),
+            "service" => Ok(PluginScope::Service),
+            "route" => Ok(PluginScope::Route),
+            _ => Err(ParseError),
+        }
     }
 }
 
@@ -437,13 +465,17 @@ impl CredentialType {
             CredentialType::Jwt => "jwt",
         }
     }
-    pub fn from_str(s: &str) -> Option<Self> {
-        Some(match s {
-            "key-auth" => CredentialType::KeyAuth,
-            "basic-auth" => CredentialType::BasicAuth,
-            "jwt" => CredentialType::Jwt,
-            _ => return None,
-        })
+}
+
+impl std::str::FromStr for CredentialType {
+    type Err = ParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "key-auth" => Ok(CredentialType::KeyAuth),
+            "basic-auth" => Ok(CredentialType::BasicAuth),
+            "jwt" => Ok(CredentialType::Jwt),
+            _ => Err(ParseError),
+        }
     }
 }
 

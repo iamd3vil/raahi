@@ -84,10 +84,10 @@ fn client_ip(session: &Session) -> Option<String> {
 
 /// Extract the request host (without port), preferring the `Host` header.
 fn req_host(req: &RequestHeader) -> String {
-    if let Some(h) = req.headers.get("host") {
-        if let Ok(s) = h.to_str() {
-            return s.split(':').next().unwrap_or(s).to_string();
-        }
+    if let Some(h) = req.headers.get("host")
+        && let Ok(s) = h.to_str()
+    {
+        return s.split(':').next().unwrap_or(s).to_string();
     }
     req.uri.host().map(|s| s.to_string()).unwrap_or_default()
 }
@@ -398,10 +398,10 @@ impl ProxyHttp for RaahiProxy {
         }
 
         // Host handling: present the upstream's host unless the route preserves the original.
-        if !ctx.preserve_host {
-            if let Some(h) = &ctx.upstream_host {
-                let _ = upstream_request.insert_header("host", h.as_str());
-            }
+        if !ctx.preserve_host
+            && let Some(h) = &ctx.upstream_host
+        {
+            let _ = upstream_request.insert_header("host", h.as_str());
         }
 
         // Standard forwarding headers.

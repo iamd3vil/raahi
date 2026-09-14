@@ -180,7 +180,7 @@ impl Metrics {
                 all.extend(s.recent.iter().cloned());
             }
         }
-        all.sort_by(|a, b| b.ts_ms.cmp(&a.ts_ms));
+        all.sort_by_key(|b| std::cmp::Reverse(b.ts_ms));
         all.truncate(limit);
         all
     }
@@ -234,14 +234,14 @@ impl Metrics {
                 },
             })
             .collect();
-        top_routes.sort_by(|a, b| b.count.cmp(&a.count));
+        top_routes.sort_by_key(|b| std::cmp::Reverse(b.count));
         top_routes.truncate(5);
 
         let mut top_consumers: Vec<ConsumerHit> = consumers
             .into_iter()
             .map(|(consumer, count)| ConsumerHit { consumer, count })
             .collect();
-        top_consumers.sort_by(|a, b| b.count.cmp(&a.count));
+        top_consumers.sort_by_key(|b| std::cmp::Reverse(b.count));
         top_consumers.truncate(5);
 
         MetricsSnapshot {

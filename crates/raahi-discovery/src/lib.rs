@@ -229,13 +229,13 @@ impl DiscoveryService {
                     .await
                 {
                     Ok(change) => {
-                        if change.changed {
-                            if let Err(error) = self.publisher.publish().await {
-                                tracing::error!(
-                                    source_id = source.id,
-                                    "discovery publish failed: {error}"
-                                );
-                            }
+                        if change.changed
+                            && let Err(error) = self.publisher.publish().await
+                        {
+                            tracing::error!(
+                                source_id = source.id,
+                                "discovery publish failed: {error}"
+                            );
                         }
                         tracing::info!(
                             source_id = source.id,
