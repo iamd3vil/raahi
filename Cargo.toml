@@ -22,6 +22,7 @@ raahi-store = { workspace = true }
 raahi-proxy = { workspace = true }
 raahi-api = { workspace = true }
 raahi-acme = { workspace = true }
+raahi-discovery = { workspace = true }
 pingora = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
@@ -48,6 +49,7 @@ raahi-store = { path = "crates/raahi-store" }
 raahi-proxy = { path = "crates/raahi-proxy" }
 raahi-api = { path = "crates/raahi-api" }
 raahi-acme = { path = "crates/raahi-acme" }
+raahi-discovery = { path = "crates/raahi-discovery" }
 
 pingora = { version = "0.8.1", default-features = false, features = ["proxy", "boringssl"] }
 pingora-limits = "0.8.1"

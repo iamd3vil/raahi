@@ -13,8 +13,9 @@ impl Store {
         let upstream =
             parse_application_upstream(&spec.upstream_url).map_err(StoreError::Invalid)?;
         let mut tx = self.pool.begin().await?;
-        let service_id = sqlx::query("INSERT INTO services (name, protocol, tls_sni, created_at, updated_at) VALUES (?,?,?,datetime('now'),datetime('now'))")
+        let service_id = sqlx::query("INSERT INTO services (name, protocol, upstream_authority, tls_sni, created_at, updated_at) VALUES (?,?,?,?,datetime('now'),datetime('now'))")
             .bind(&spec.name).bind(upstream.protocol.as_str())
+            .bind(Some(&upstream.host))
             .bind(upstream.protocol.is_tls().then_some(&upstream.host))
             .execute(&mut *tx).await.map_err(super::crud::map_err)?.last_insert_rowid();
 

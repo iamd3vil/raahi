@@ -9,6 +9,10 @@ import type {
   ConfigSummary,
   Consumer,
   Credential,
+  DiscoveryProvider,
+  DiscoverySource,
+  DiscoverySourceInput,
+  DiscoverySourceStatus,
   MetricsSnapshot,
   Plugin,
   RequestRecord,
@@ -94,6 +98,21 @@ export const api = {
     req<Target>('POST', `/services/${serviceId}/targets`, t),
   updateTarget: (id: number, t: Partial<Target>) => req<Target>('PUT', `/targets/${id}`, t),
   deleteTarget: (id: number) => req('DELETE', `/targets/${id}`),
+
+  // service discovery: sources attach to a service and keep its targets in sync
+  listDiscoveryProviders: () => req<DiscoveryProvider[]>('GET', '/discovery/providers'),
+  listDiscoverySources: (serviceId: number) =>
+    req<DiscoverySource[]>('GET', `/services/${serviceId}/discovery-sources`),
+  createDiscoverySource: (serviceId: number, s: DiscoverySourceInput) =>
+    req<DiscoverySource>('POST', `/services/${serviceId}/discovery-sources`, s),
+  getDiscoverySource: (id: number) => req<DiscoverySource>('GET', `/discovery-sources/${id}`),
+  updateDiscoverySource: (id: number, s: DiscoverySourceInput) =>
+    req<DiscoverySource>('PUT', `/discovery-sources/${id}`, s),
+  deleteDiscoverySource: (id: number) => req('DELETE', `/discovery-sources/${id}`),
+  refreshDiscoverySource: (id: number) =>
+    req<DiscoverySourceStatus>('POST', `/discovery-sources/${id}/refresh`),
+  discoverySourceStatus: (id: number) =>
+    req<DiscoverySourceStatus>('GET', `/discovery-sources/${id}/status`),
 
   // routes
   listRoutes: () => req<Route[]>('GET', '/routes'),

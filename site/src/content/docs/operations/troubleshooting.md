@@ -28,6 +28,23 @@ A 502 usually means Raahi could not connect to the selected upstream.
 4. For an HTTPS upstream, check its certificate and the service's `tls_sni` value.
 5. Temporarily set `RUST_LOG=raahi_proxy=debug` and inspect the logs.
 
+## A service has no targets, or the wrong ones
+
+Discovered targets come from a [discovery source](/concepts/service-discovery/). Start with its status:
+
+```bash
+curl http://127.0.0.1:9080/api/v1/discovery-sources/1/status \
+  -H "Authorization: Bearer $RAAHI_TOKEN"
+```
+
+- `pending` means the first refresh has not finished. Force one with `POST /api/v1/discovery-sources/1/refresh`.
+- `failing` or `stale` means lookups are failing. `last_error` says why. A failing source still uses its last known good set; a stale source keeps targets visible but stops sending new traffic to them.
+- A `stale_count` above zero means those targets outlived `stale_after_ms` and are retained for diagnosis until the source recovers or is deleted.
+- A `draining_count` that never falls means targets are waiting for `removal_grace_ms` to expire. Draining targets receive no new traffic.
+- An unchanged `revision` after a refresh means the registry returned the same endpoints, so the problem sits in the registry rather than in Raahi.
+
+A discovered target that reaches the wrong application usually needs `upstream_authority` on the service, because the upstream is routing on a `Host` header that now carries an IP address.
+
 ## A request loops between redirects
 
 When Raahi terminates HTTPS, it sends `X-Forwarded-Proto: https` upstream. Configure the application to trust Raahi as a proxy. An application that ignores this header may redirect every proxied request back to HTTPS.

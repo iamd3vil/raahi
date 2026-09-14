@@ -185,6 +185,9 @@ pub fn required_role(method: &Method, path: &str, query: Option<&str>) -> Role {
     if p.starts_with("/auth/") {
         return Role::Viewer; // logout, me, own password: any signed-in user
     }
+    if p.starts_with("/discovery-sources") || p.ends_with("/discovery-sources") {
+        return Role::Admin; // source configs may contain registry credentials
+    }
     let is_read = matches!(*method, Method::GET | Method::HEAD);
     let admin_only = p.starts_with("/users")
         || p.starts_with("/admin/")
@@ -695,6 +698,18 @@ mod tests {
         assert_eq!(
             required_role(&get, "/api/v1/acme/cloudflare-token", None),
             Role::Viewer
+        );
+        assert_eq!(
+            required_role(&get, "/api/v1/discovery/providers", None),
+            Role::Viewer
+        );
+        assert_eq!(
+            required_role(&get, "/api/v1/services/1/discovery-sources", None),
+            Role::Admin
+        );
+        assert_eq!(
+            required_role(&post, "/api/v1/discovery-sources/1/refresh", None),
+            Role::Admin
         );
         // Self-service endpoints inside the guard need only a signed-in user.
         assert_eq!(

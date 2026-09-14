@@ -115,6 +115,116 @@ pub async fn delete_target(
     Ok(Json(json!({ "deleted": true })))
 }
 
+// ---- discovery ---------------------------------------------------------------
+
+fn validate_discovery_source(s: &AppState, spec: &DiscoverySourceSpec) -> ApiResult<()> {
+    if spec.name.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "discovery source name is required".into(),
+        ));
+    }
+    s.discovery_registry
+        .validate(&spec.provider, &spec.config)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))
+}
+
+pub async fn discovery_providers(State(s): State<AppState>) -> Json<Value> {
+    Json(json!(s.discovery_registry.descriptors()))
+}
+
+pub async fn list_discovery_sources(
+    State(s): State<AppState>,
+    Path(service_id): Path<Id>,
+) -> ApiResult<Json<Vec<DiscoverySource>>> {
+    if s.store.get_service(service_id).await?.is_none() {
+        return Err(ApiError::NotFound);
+    }
+    Ok(Json(s.store.list_discovery_sources_for(service_id).await?))
+}
+
+pub async fn get_discovery_source(
+    State(s): State<AppState>,
+    Path(id): Path<Id>,
+) -> ApiResult<Json<DiscoverySource>> {
+    s.store
+        .get_discovery_source(id)
+        .await?
+        .map(Json)
+        .ok_or(ApiError::NotFound)
+}
+
+pub async fn create_discovery_source(
+    State(s): State<AppState>,
+    Path(service_id): Path<Id>,
+    Json(spec): Json<DiscoverySourceSpec>,
+) -> ApiResult<Json<DiscoverySource>> {
+    validate_discovery_source(&s, &spec)?;
+    let source = s.store.create_discovery_source(service_id, &spec).await?;
+    s.discovery_handle.trigger(Some(source.id)).await;
+    Ok(Json(source))
+}
+
+pub async fn update_discovery_source(
+    State(s): State<AppState>,
+    Path(id): Path<Id>,
+    Json(spec): Json<DiscoverySourceSpec>,
+) -> ApiResult<Json<DiscoverySource>> {
+    validate_discovery_source(&s, &spec)?;
+    let source = s
+        .store
+        .update_discovery_source(id, &spec)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    reload(&s).await?;
+    if source.enabled {
+        s.discovery_handle.trigger(Some(source.id)).await;
+    }
+    Ok(Json(source))
+}
+
+pub async fn delete_discovery_source(
+    State(s): State<AppState>,
+    Path(id): Path<Id>,
+) -> ApiResult<Json<Value>> {
+    if !s.store.delete_discovery_source(id).await? {
+        return Err(ApiError::NotFound);
+    }
+    reload(&s).await?;
+    Ok(Json(json!({"deleted": true})))
+}
+
+pub async fn refresh_discovery_source(
+    State(s): State<AppState>,
+    Path(id): Path<Id>,
+) -> ApiResult<Json<DiscoverySourceStatus>> {
+    let source = s
+        .store
+        .get_discovery_source(id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if !source.enabled {
+        return Err(ApiError::BadRequest("discovery source is disabled".into()));
+    }
+    s.discovery_handle.trigger(Some(id)).await;
+    let status = s
+        .store
+        .get_discovery_status(id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    Ok(Json(status))
+}
+
+pub async fn discovery_source_status(
+    State(s): State<AppState>,
+    Path(id): Path<Id>,
+) -> ApiResult<Json<DiscoverySourceStatus>> {
+    s.store
+        .get_discovery_status(id)
+        .await?
+        .map(Json)
+        .ok_or(ApiError::NotFound)
+}
+
 // ---- routes ------------------------------------------------------------------
 pub async fn list_routes(State(s): State<AppState>) -> ApiResult<Json<Vec<Route>>> {
     Ok(Json(s.store.list_routes().await?))
@@ -922,6 +1032,36 @@ pub async fn prometheus_metrics(State(s): State<AppState>) -> impl axum::respons
         ));
     }
 
+    m("# HELP raahi_discovery_source_healthy Discovery source state (1 = healthy).".into());
+    m("# TYPE raahi_discovery_source_healthy gauge".into());
+    m("# HELP raahi_discovery_endpoints Discovery-managed targets by state.".into());
+    m("# TYPE raahi_discovery_endpoints gauge".into());
+    if let Ok(sources) = s.store.list_discovery_sources().await {
+        for source in sources {
+            if let Ok(Some(status)) = s.store.get_discovery_status(source.id).await {
+                m(format!(
+                    "raahi_discovery_source_healthy{{service_id=\"{}\",source=\"{}\",provider=\"{}\"}} {}",
+                    source.service_id,
+                    esc(&source.name),
+                    esc(&source.provider),
+                    (status.state == DiscoveryState::Healthy) as u8
+                ));
+                for (state, count) in [
+                    ("active", status.active_count),
+                    ("draining", status.draining_count),
+                    ("stale", status.stale_count),
+                ] {
+                    m(format!(
+                        "raahi_discovery_endpoints{{service_id=\"{}\",source=\"{}\",provider=\"{}\",state=\"{state}\"}} {count}",
+                        source.service_id,
+                        esc(&source.name),
+                        esc(&source.provider),
+                    ));
+                }
+            }
+        }
+    }
+
     // Stream (L4) listeners. Each family's samples stay contiguous.
     let stream = raahi_proxy::stream_stats();
     m(
@@ -1092,8 +1232,12 @@ pub async fn export_config(
 
     let services = s.store.list_services().await?;
     let mut services_out = Vec::new();
+    let all_targets = s.store.list_all_targets().await?;
     for svc in &services {
-        let targets = s.store.list_targets_for(svc.id).await?;
+        let targets: Vec<_> = all_targets
+            .iter()
+            .filter(|target| target.service_id == svc.id && target.source_id.is_none())
+            .collect();
         services_out.push(json!({ "service": svc, "targets": targets }));
     }
 
@@ -1156,6 +1300,10 @@ pub async fn export_config(
         "raahi_export_version": 1,
         "settings": s.store.get_settings().await?,
         "services": services_out,
+        "discovery_sources": s.store.list_discovery_sources().await?.iter().map(|source| json!({
+            "service_id": source.service_id,
+            "source": source,
+        })).collect::<Vec<_>>(),
         "routes": s.store.list_routes().await?,
         "stream_routes": s.store.list_stream_routes().await?,
         "plugins": s.store.list_plugins().await?,

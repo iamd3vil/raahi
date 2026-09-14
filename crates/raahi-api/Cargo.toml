@@ -12,6 +12,7 @@ raahi-core = { workspace = true }
 raahi-store = { workspace = true }
 raahi-proxy = { workspace = true }
 raahi-acme = { workspace = true }
+raahi-discovery = { workspace = true }
 arc-swap = { workspace = true }
 pingora = { workspace = true }
 axum = { workspace = true }

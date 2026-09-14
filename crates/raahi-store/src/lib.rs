@@ -4,6 +4,7 @@
 mod acme_eab;
 mod applications;
 mod crud;
+mod discovery;
 mod rows;
 mod users;
 
@@ -17,6 +18,7 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 
+pub use discovery::ReconcileResult;
 pub use users::normalize_email;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
@@ -47,6 +49,7 @@ pub struct Store {
 pub struct ImportReport {
     pub services: usize,
     pub targets: usize,
+    pub discovery_sources: usize,
     pub routes: usize,
     pub stream_routes: usize,
     pub plugins: usize,
@@ -129,6 +132,7 @@ impl Store {
             "consumer_credentials",
             "consumers",
             "targets",
+            "discovery_sources",
             "services",
             "certificates",
             "acme_accounts",
@@ -146,8 +150,8 @@ impl Store {
             let s = &is.service;
             let res = sqlx::query(
                 "INSERT INTO services (name, protocol, connect_timeout_ms, read_timeout_ms, \
-                 write_timeout_ms, retries, lb_algorithm, tls_sni, health_path, created_at, updated_at) \
-                 VALUES (?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))",
+                 write_timeout_ms, retries, lb_algorithm, upstream_authority, tls_sni, health_path, created_at, updated_at) \
+                 VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))",
             )
             .bind(&s.name)
             .bind(s.protocol.as_str())
@@ -156,6 +160,7 @@ impl Store {
             .bind(s.write_timeout_ms as i64)
             .bind(s.retries as i64)
             .bind(s.lb_algorithm.as_str())
+            .bind(&s.upstream_authority)
             .bind(&s.tls_sni)
             .bind(&s.health_path)
             .execute(&mut *tx)
@@ -165,18 +170,60 @@ impl Store {
             report.services += 1;
 
             for t in &is.targets {
+                if t.source_id.is_some() {
+                    continue;
+                }
                 sqlx::query(
-                    "INSERT INTO targets (service_id, host, port, weight, enabled) VALUES (?,?,?,?,?)",
+                    "INSERT INTO targets (service_id, host, port, weight, priority, enabled) VALUES (?,?,?,?,?,?)",
                 )
                 .bind(new_id)
                 .bind(&t.host)
                 .bind(t.port as i64)
                 .bind(t.weight as i64)
+                .bind(t.priority as i64)
                 .bind(t.enabled as i64)
                 .execute(&mut *tx)
                 .await?;
                 report.targets += 1;
             }
+        }
+
+        // Discovery source configuration is restored, but materialized discovered
+        // targets are not. Providers repopulate them after startup.
+        for imported in &doc.discovery_sources {
+            let Some(&service_id) = svc_map.get(&imported.service_id) else {
+                report.skipped.push(format!(
+                    "discovery source '{}': unknown service {}",
+                    imported.source.name, imported.service_id
+                ));
+                continue;
+            };
+            let source = &imported.source;
+            let res = sqlx::query(
+                "INSERT INTO discovery_sources
+                 (service_id, name, provider, config, enabled, stale_after_ms,
+                  removal_grace_ms, created_at, updated_at)
+                 VALUES (?,?,?,?,?,?,?,datetime('now'),datetime('now'))",
+            )
+            .bind(service_id)
+            .bind(&source.name)
+            .bind(&source.provider)
+            .bind(source.config.to_string())
+            .bind(source.enabled as i64)
+            .bind(source.stale_after_ms as i64)
+            .bind(source.removal_grace_ms as i64)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("INSERT INTO discovery_source_status (source_id, state) VALUES (?,?)")
+                .bind(res.last_insert_rowid())
+                .bind(if source.enabled {
+                    "pending"
+                } else {
+                    "disabled"
+                })
+                .execute(&mut *tx)
+                .await?;
+            report.discovery_sources += 1;
         }
 
         // Routes (old id -> new id).
@@ -450,25 +497,56 @@ impl Store {
     /// Build a fresh immutable [`ProxyConfig`] snapshot from the current DB state.
     /// Each call stamps a new monotonic version.
     pub async fn build_snapshot(&self) -> Result<ProxyConfig, StoreError> {
-        let services = self.list_services().await?;
-        let targets = self.list_all_targets().await?;
-        let routes = self.list_routes().await?;
-        let stream_routes = self.list_stream_routes().await?;
-        let plugins = self.list_plugins().await?;
-        let consumers = self.list_consumers().await?;
-        let creds = self.list_all_credentials().await?;
-        let settings = self.get_settings().await?;
-        let wasm_modules = self
-            .list_wasm_modules()
-            .await?
-            .into_iter()
+        let mut tx = self.pool.begin().await?;
+        let rows = sqlx::query("SELECT * FROM services ORDER BY id")
+            .fetch_all(&mut *tx)
+            .await?;
+        let services: Vec<_> = rows.iter().map(crate::rows::map_service).collect();
+        let rows = sqlx::query("SELECT * FROM targets ORDER BY id")
+            .fetch_all(&mut *tx)
+            .await?;
+        let targets: Vec<_> = rows.iter().map(crate::rows::map_target).collect();
+        let rows = sqlx::query("SELECT * FROM routes ORDER BY id")
+            .fetch_all(&mut *tx)
+            .await?;
+        let routes: Vec<_> = rows.iter().map(crate::rows::map_route).collect();
+        let rows = sqlx::query("SELECT * FROM stream_routes ORDER BY id")
+            .fetch_all(&mut *tx)
+            .await?;
+        let stream_routes: Vec<_> = rows.iter().map(crate::rows::map_stream_route).collect();
+        let rows = sqlx::query("SELECT * FROM plugins ORDER BY ordering, id")
+            .fetch_all(&mut *tx)
+            .await?;
+        let plugins: Vec<_> = rows.iter().map(crate::rows::map_plugin).collect();
+        let rows = sqlx::query("SELECT * FROM consumers ORDER BY id")
+            .fetch_all(&mut *tx)
+            .await?;
+        let consumers: Vec<_> = rows.iter().map(crate::rows::map_consumer).collect();
+        let rows = sqlx::query("SELECT * FROM consumer_credentials ORDER BY id")
+            .fetch_all(&mut *tx)
+            .await?;
+        let creds: Vec<_> = rows.iter().map(crate::rows::map_credential).collect();
+        let settings_row = sqlx::query("SELECT * FROM settings WHERE id = 1")
+            .fetch_one(&mut *tx)
+            .await?;
+        let settings = crate::rows::map_settings(&settings_row);
+        let rows = sqlx::query("SELECT * FROM wasm_modules ORDER BY id")
+            .fetch_all(&mut *tx)
+            .await?;
+        let wasm_modules = rows
+            .iter()
+            .map(crate::rows::map_wasm_module)
             .map(|m| (m.name, std::sync::Arc::new(m.wasm)))
             .collect();
+        tx.commit().await?;
 
         let services = services.into_iter().map(|s| (s.id, s)).collect();
 
         let mut targets_map: HashMap<i64, Vec<Target>> = HashMap::new();
-        for t in targets.into_iter().filter(|t| t.enabled) {
+        for t in targets
+            .into_iter()
+            .filter(|t| t.enabled && t.state != raahi_core::TargetState::Draining)
+        {
             targets_map.entry(t.service_id).or_default().push(t);
         }
 

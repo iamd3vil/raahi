@@ -329,9 +329,17 @@ impl ProxyHttp for RaahiProxy {
 
         let svc = &sr.service;
         let tls = svc.protocol.is_tls();
-        let sni = svc.tls_sni.clone().unwrap_or_else(|| backend.host.clone());
+        let sni = svc
+            .tls_sni
+            .clone()
+            .or_else(|| svc.upstream_authority.clone())
+            .unwrap_or_else(|| backend.host.clone());
 
-        ctx.upstream_host = Some(backend.host.clone());
+        ctx.upstream_host = Some(
+            svc.upstream_authority
+                .clone()
+                .unwrap_or_else(|| backend.host.clone()),
+        );
         ctx.upstream_addr = Some(backend.addr_string());
 
         // Connect to the health checker's elected address so both sides share one

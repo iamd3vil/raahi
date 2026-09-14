@@ -166,7 +166,11 @@ impl HealthService {
                     flag: b.healthy.clone(),
                     addresses: b.addresses.clone(),
                     tls: sr.service.protocol.is_tls(),
-                    tls_sni: sr.service.tls_sni.clone(),
+                    tls_sni: sr
+                        .service
+                        .tls_sni
+                        .clone()
+                        .or_else(|| sr.service.upstream_authority.clone()),
                 })
             })
             .collect()

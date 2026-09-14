@@ -29,6 +29,7 @@ pub fn map_service(r: &SqliteRow) -> Service {
         retries: r.get::<i64, _>("retries") as u32,
         lb_algorithm: LbAlgorithm::from_str(&r.get::<String, _>("lb_algorithm"))
             .unwrap_or_default(),
+        upstream_authority: r.get("upstream_authority"),
         tls_sni: r.get("tls_sni"),
         health_path: r.get("health_path"),
         created_at: parse_dt(&r.get::<String, _>("created_at")),
@@ -43,7 +44,36 @@ pub fn map_target(r: &SqliteRow) -> Target {
         host: r.get("host"),
         port: r.get::<i64, _>("port") as u16,
         weight: r.get::<i64, _>("weight") as u32,
+        priority: r.get::<i64, _>("priority") as u16,
         enabled: r.get::<i64, _>("enabled") != 0,
+        source_id: r.get("source_id"),
+        provider_key: r.get("provider_key"),
+        state: TargetState::parse(&r.get::<String, _>("state")).unwrap_or_default(),
+        metadata: serde_json::from_str(&r.get::<String, _>("metadata")).unwrap_or_default(),
+        last_seen_at: r
+            .get::<Option<String>, _>("last_seen_at")
+            .as_deref()
+            .map(parse_dt),
+        missing_since: r
+            .get::<Option<String>, _>("missing_since")
+            .as_deref()
+            .map(parse_dt),
+    }
+}
+
+pub fn map_discovery_source(r: &SqliteRow) -> DiscoverySource {
+    DiscoverySource {
+        id: r.get("id"),
+        service_id: r.get("service_id"),
+        name: r.get("name"),
+        provider: r.get("provider"),
+        config: serde_json::from_str(&r.get::<String, _>("config"))
+            .unwrap_or_else(|_| serde_json::json!({})),
+        enabled: r.get::<i64, _>("enabled") != 0,
+        stale_after_ms: r.get::<i64, _>("stale_after_ms") as u64,
+        removal_grace_ms: r.get::<i64, _>("removal_grace_ms") as u64,
+        created_at: parse_dt(&r.get::<String, _>("created_at")),
+        updated_at: parse_dt(&r.get::<String, _>("updated_at")),
     }
 }
 

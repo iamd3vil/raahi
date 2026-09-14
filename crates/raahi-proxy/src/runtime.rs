@@ -18,6 +18,7 @@ pub struct BackendRt {
     pub host: String,
     pub port: u16,
     pub weight: u32,
+    pub priority: u16,
     pub healthy: Arc<AtomicBool>,
     pub addresses: Arc<RwLock<Addresses>>,
 }
@@ -67,19 +68,22 @@ pub struct ServiceRuntime {
 }
 
 impl ServiceRuntime {
-    /// Pick a backend honoring the service's LB algorithm. Prefers healthy backends;
-    /// if all are unhealthy, falls back to the full set rather than failing outright.
+    /// Pick a backend honoring priority and the service's LB algorithm. The lowest
+    /// priority tier containing a healthy backend wins. If every backend is
+    /// unhealthy, return none rather than sending traffic to an endpoint that the
+    /// health checker has ejected.
     pub fn select(&self, client_key: &[u8]) -> Option<&BackendRt> {
         let healthy: Vec<&BackendRt> = self
             .backends
             .iter()
             .filter(|b| b.healthy.load(Ordering::Relaxed))
             .collect();
-        let pool: Vec<&BackendRt> = if healthy.is_empty() {
-            self.backends.iter().collect()
-        } else {
-            healthy
-        };
+        let available = healthy;
+        let priority = available.iter().map(|backend| backend.priority).min()?;
+        let pool: Vec<&BackendRt> = available
+            .into_iter()
+            .filter(|backend| backend.priority == priority)
+            .collect();
         if pool.is_empty() {
             return None;
         }
@@ -175,6 +179,7 @@ impl RuntimeConfig {
                         host: t.host,
                         port: t.port,
                         weight: t.weight,
+                        priority: t.priority,
                         healthy,
                         addresses,
                     }
@@ -250,9 +255,59 @@ mod tests {
             host: "example.internal".into(),
             port: 9000,
             weight: 1,
+            priority: 0,
             healthy: Arc::new(AtomicBool::new(true)),
             addresses: Arc::new(RwLock::new(Addresses { addrs, active })),
         }
+    }
+
+    fn backend_with_priority(priority: u16, healthy: bool) -> BackendRt {
+        let mut backend = backend(vec!["127.0.0.1:1".parse().unwrap()], 0);
+        backend.priority = priority;
+        backend.healthy.store(healthy, Ordering::Relaxed);
+        backend
+    }
+
+    fn service_runtime(backends: Vec<BackendRt>) -> ServiceRuntime {
+        ServiceRuntime {
+            service: Service {
+                id: 1,
+                name: "test".into(),
+                protocol: raahi_core::Protocol::Http,
+                connect_timeout_ms: 1,
+                read_timeout_ms: 1,
+                write_timeout_ms: 1,
+                retries: 0,
+                lb_algorithm: LbAlgorithm::RoundRobin,
+                upstream_authority: None,
+                tls_sni: None,
+                health_path: None,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            },
+            backends,
+            cursor: AtomicUsize::new(0),
+        }
+    }
+
+    #[test]
+    fn target_priority_uses_lowest_healthy_tier() {
+        let runtime = service_runtime(vec![
+            backend_with_priority(0, false),
+            backend_with_priority(10, true),
+        ]);
+        assert_eq!(runtime.select(b"client").unwrap().priority, 10);
+
+        runtime.backends[0].healthy.store(true, Ordering::Relaxed);
+        assert_eq!(runtime.select(b"client").unwrap().priority, 0);
+    }
+
+    #[test]
+    fn all_unhealthy_targets_are_not_selected() {
+        let runtime = service_runtime(vec![backend_with_priority(0, true)]);
+        assert!(runtime.select(b"client").is_some());
+        runtime.backends[0].healthy.store(false, Ordering::Relaxed);
+        assert!(runtime.select(b"client").is_none());
     }
 
     #[test]

@@ -33,6 +33,8 @@ tags:
     description: Logical upstreams and their shared transport settings.
   - name: Targets
     description: Concrete upstream hosts belonging to services.
+  - name: Service discovery
+    description: Providers and sources that keep a service's targets in step with an external registry.
   - name: Routes
     description: HTTP request matching and service selection.
   - name: Stream routes
@@ -506,6 +508,134 @@ paths:
       responses:
         '200': {$ref: '#/components/responses/Deleted'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/discovery/providers:
+    get:
+      tags: [Service discovery]
+      summary: List discovery providers
+      description: >-
+        Static metadata for every built-in provider: its configuration keys, defaults, and
+        which endpoint fields it supplies itself. Nothing here depends on stored configuration.
+      operationId: listDiscoveryProviders
+      responses:
+        '200':
+          description: Providers ordered by ID.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/DiscoveryProvider'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/services/{service_id}/discovery-sources:
+    parameters:
+      - $ref: '#/components/parameters/ServiceId'
+    get:
+      tags: [Service discovery]
+      summary: List a service's discovery sources
+      description: Returns an empty array when the parent service does not exist.
+      operationId: listServiceDiscoverySources
+      responses:
+        '200':
+          description: Discovery sources ordered by ID.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/DiscoverySource'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    post:
+      tags: [Service discovery]
+      summary: Add a discovery source to a service
+      description: >-
+        The config is validated against the selected provider and the first refresh runs in the
+        background. Targets created by a source are owned by it and are not editable through the
+        target endpoints.
+      operationId: createDiscoverySource
+      requestBody: {$ref: '#/components/requestBodies/DiscoverySourceInput'}
+      responses:
+        '200':
+          description: Created discovery source.
+          content: {application/json: {schema: {$ref: '#/components/schemas/DiscoverySource'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/discovery-sources/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Service discovery]
+      summary: Get a discovery source
+      operationId: getDiscoverySource
+      responses:
+        '200':
+          description: Discovery source.
+          content: {application/json: {schema: {$ref: '#/components/schemas/DiscoverySource'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    put:
+      tags: [Service discovery]
+      summary: Replace a discovery source
+      description: >-
+        Full replacement; omitted optional fields reset to their defaults. Changing the provider or
+        its config discards the current endpoint set and resolves again from scratch; targets that
+        the new config no longer returns leave through the removal grace period.
+      operationId: updateDiscoverySource
+      requestBody: {$ref: '#/components/requestBodies/DiscoverySourceInput'}
+      responses:
+        '200':
+          description: Updated discovery source.
+          content: {application/json: {schema: {$ref: '#/components/schemas/DiscoverySource'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    delete:
+      tags: [Service discovery]
+      summary: Delete a discovery source
+      description: Also deletes every target the source owns, immediately and without the removal grace period.
+      operationId: deleteDiscoverySource
+      responses:
+        '200': {$ref: '#/components/responses/Deleted'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/discovery-sources/{id}/refresh:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      tags: [Service discovery]
+      summary: Refresh a discovery source now
+      description: >-
+        Queues an immediate background refresh instead of waiting for the next interval and returns
+        the source's current status. Poll the status endpoint to observe completion or failure.
+      operationId: refreshDiscoverySource
+      responses:
+        '200':
+          description: Current status after the refresh was queued.
+          content: {application/json: {schema: {$ref: '#/components/schemas/DiscoverySourceStatus'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/discovery-sources/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Service discovery]
+      summary: Get discovery source status
+      description: Runtime state of the source, covering its last attempt and success, endpoint revision, and target counts by state.
+      operationId: getDiscoverySourceStatus
+      responses:
+        '200':
+          description: Discovery source status.
+          content: {application/json: {schema: {$ref: '#/components/schemas/DiscoverySourceStatus'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '500': {$ref: '#/components/responses/InternalError'}
   /api/v1/routes:
@@ -1121,6 +1251,9 @@ components:
     TargetInput:
       required: true
       content: {application/json: {schema: {$ref: '#/components/schemas/TargetInput'}}}
+    DiscoverySourceInput:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/DiscoverySourceInput'}}}
     RouteInput:
       required: true
       content: {application/json: {schema: {$ref: '#/components/schemas/RouteInput'}}}
@@ -1340,12 +1473,13 @@ components:
         write_timeout_ms: {type: integer, format: int64, minimum: 0, default: 60000}
         retries: {type: integer, format: int32, minimum: 0, default: 1}
         lb_algorithm: {$ref: '#/components/schemas/LoadBalancingAlgorithm'}
-        tls_sni: {type: string, nullable: true, example: upstream.example.com}
+        tls_sni: {type: string, nullable: true, example: upstream.example.com, description: SNI presented to an HTTPS upstream. Unset it falls back to upstream_authority, then the target host.}
+        upstream_authority: {type: string, nullable: true, example: orders.internal, description: "Host and :authority sent upstream when the route does not preserve the incoming Host header, given as host or host:port. Discovered targets are usually bare addresses, so set this when the application routes on the Host header. Null uses the target host."}
         health_path: {type: string, nullable: true, example: /healthz, description: "HTTP GET health check path; HTTPS services use verified HTTPS with tls_sni. Blank selects TCP checks."}
     Service:
       allOf:
         - type: object
-          required: [id, name, protocol, connect_timeout_ms, read_timeout_ms, write_timeout_ms, retries, lb_algorithm, tls_sni, health_path, created_at, updated_at]
+          required: [id, name, protocol, connect_timeout_ms, read_timeout_ms, write_timeout_ms, retries, lb_algorithm, tls_sni, upstream_authority, health_path, created_at, updated_at]
           properties:
             id: {$ref: '#/components/schemas/Id'}
             created_at: {$ref: '#/components/schemas/Timestamp'}
@@ -1358,15 +1492,129 @@ components:
         host: {type: string, minLength: 1, example: 127.0.0.1}
         port: {type: integer, minimum: 0, maximum: 65535, example: 9001}
         weight: {type: integer, format: int32, minimum: 0, default: 100}
+        priority: {type: integer, format: int32, minimum: 0, maximum: 65535, default: 0, description: Failover tier. Raahi balances across the healthy targets holding the lowest priority value and uses a higher value only when every target below it is unavailable.}
         enabled: {type: boolean, default: true}
+    TargetState:
+      type: string
+      enum: [active, draining, stale]
+      description: >-
+        active takes new traffic; draining finishes in-flight requests after the endpoint left a
+        successful refresh and is deleted when removal_grace_ms expires; stale is a last known good
+        endpoint retained after refreshes stopped succeeding for longer than stale_after_ms. It
+        remains visible for diagnosis but does not take new traffic.
     Target:
       allOf:
         - type: object
-          required: [id, service_id, host, port, weight, enabled]
+          required: [id, service_id, host, port, weight, priority, enabled, state, source_id, provider_key, metadata, last_seen_at, missing_since]
           properties:
             id: {$ref: '#/components/schemas/Id'}
             service_id: {$ref: '#/components/schemas/Id'}
+            state: {$ref: '#/components/schemas/TargetState'}
+            source_id: {allOf: [{$ref: '#/components/schemas/NullableId'}], description: Discovery source that owns this target. Null for targets created by an operator.}
+            provider_key: {type: string, nullable: true, example: 'orders-7f9c.internal:8080', description: Stable identity the provider reported for this endpoint. Raahi matches it across refreshes so an endpoint that returns keeps its health state instead of starting over.}
+            metadata: {type: object, additionalProperties: {type: string}, default: {}, description: "Labels the provider returned with the endpoint, such as a zone or version. Empty for operator-created targets."}
+            last_seen_at: {allOf: [{$ref: '#/components/schemas/Timestamp'}], nullable: true, description: Last successful discovery refresh that included this endpoint. Null for manual targets.}
+            missing_since: {allOf: [{$ref: '#/components/schemas/Timestamp'}], nullable: true, description: When an endpoint first disappeared from a successful refresh. Set only while draining.}
         - $ref: '#/components/schemas/TargetInput'
+    DiscoveryProviderId:
+      type: string
+      enum: [dns, dns-srv, http]
+    DiscoveryProvider:
+      type: object
+      required: [id, name, description, supplies_port, supplies_weight, supplies_priority, config_schema, defaults]
+      properties:
+        id: {$ref: '#/components/schemas/DiscoveryProviderId'}
+        name: {type: string, example: DNS A and AAAA}
+        description: {type: string, example: Resolves a hostname and turns every returned address into a target.}
+        supplies_port: {type: boolean, description: "Whether the provider reports a port. When false, config.port is required and applies to every endpoint."}
+        supplies_weight: {type: boolean, description: "Whether the provider reports a weight. When false, config.weight applies to every endpoint."}
+        supplies_priority: {type: boolean, description: "Whether the provider reports a priority. When false, config.priority applies to every endpoint."}
+        config_schema: {type: object, additionalProperties: true, description: "JSON Schema for this provider's config object, for building a form without hard-coding provider fields."}
+        defaults: {type: object, additionalProperties: true, description: Config values applied when a source omits them.}
+    DiscoveryConfigCommon:
+      type: object
+      description: Scheduling and endpoint defaults shared by every provider.
+      properties:
+        interval_ms: {type: integer, format: int64, minimum: 1000, default: 30000, description: Maximum time between scheduled refreshes. Raahi subtracts up to 10 percent jitter, and DNS sources refresh sooner when the record TTL is shorter.}
+        timeout_ms: {type: integer, format: int64, minimum: 100, default: 5000, description: Deadline for one refresh attempt. A refresh that runs out of time counts as a failure.}
+        port: {type: integer, minimum: 1, maximum: 65535, nullable: true, description: Port applied to every endpoint the provider returns without one. Required when the provider does not supply a port.}
+        weight: {type: integer, format: int32, minimum: 0, default: 100, description: Weight applied to endpoints the provider returns without one.}
+        priority: {type: integer, format: int32, minimum: 0, maximum: 65535, default: 0, description: Priority applied to endpoints the provider returns without one.}
+    DnsDiscoveryConfig:
+      allOf:
+        - type: object
+          required: [hostname, port]
+          properties:
+            hostname: {type: string, minLength: 1, example: orders.service.internal, description: Name to resolve. Every returned address becomes one target.}
+            record_types: {type: array, items: {type: string, enum: [a, aaaa]}, default: [a, aaaa], minItems: 1, description: Record types to query.}
+            resolver: {type: string, nullable: true, example: '10.0.0.53:53', description: Resolver address. Null uses the system resolver.}
+        - $ref: '#/components/schemas/DiscoveryConfigCommon'
+    DnsSrvDiscoveryConfig:
+      allOf:
+        - type: object
+          required: [service_name]
+          properties:
+            service_name: {type: string, minLength: 1, example: _http._tcp.orders.internal, description: "SRV owner name. Each record supplies a host, port, weight, and priority."}
+            resolver: {type: string, nullable: true, example: '10.0.0.53:53', description: Resolver address. Null uses the system resolver.}
+            use_record_weight: {type: boolean, default: true, description: Take the weight from the SRV record instead of config.weight.}
+            use_record_priority: {type: boolean, default: true, description: "Take the priority from the SRV record instead of config.priority. SRV priority is already lowest-first, so it maps onto target priority unchanged."}
+        - $ref: '#/components/schemas/DiscoveryConfigCommon'
+    HttpDiscoveryConfig:
+      allOf:
+        - type: object
+          required: [url]
+          properties:
+            url: {type: string, example: 'https://registry.internal/v1/orders/endpoints', description: Endpoint polled with GET. It must answer with JSON.}
+            headers: {type: object, additionalProperties: {type: string}, default: {}, description: "Extra request headers, usually an authorization header. Stored in the database and returned to admins that can read the source."}
+            endpoints_path: {type: string, nullable: true, example: data.endpoints, description: "Dot path to the endpoint array when the document does not return it at the root. Each array item is an object: host required, then optional port, weight, priority, enabled, key, and metadata. key becomes the target's provider_key."}
+            tls_verify: {type: boolean, default: true, description: Verify the registry's TLS certificate. Leave on outside a lab.}
+        - $ref: '#/components/schemas/DiscoveryConfigCommon'
+    DiscoverySourceInput:
+      type: object
+      required: [name, provider, config]
+      properties:
+        name: {type: string, minLength: 1, example: orders-dns, description: "Operator-facing name, unique within the service."}
+        provider: {$ref: '#/components/schemas/DiscoveryProviderId'}
+        enabled: {type: boolean, default: true, description: A disabled source stops refreshing and marks its targets draining. They receive no new traffic and are deleted after removal_grace_ms.}
+        config:
+          description: Provider configuration. dns uses DnsDiscoveryConfig, dns-srv uses DnsSrvDiscoveryConfig, http uses HttpDiscoveryConfig. Scheduling, port, weight, and priority live here.
+          oneOf:
+            - $ref: '#/components/schemas/DnsDiscoveryConfig'
+            - $ref: '#/components/schemas/DnsSrvDiscoveryConfig'
+            - $ref: '#/components/schemas/HttpDiscoveryConfig'
+        stale_after_ms: {type: integer, format: int64, minimum: 0, default: 300000, description: "How long the last known good endpoints stay trusted after refreshes start failing. Past it the source turns stale and its targets remain visible but stop taking new traffic. Zero marks them stale on the first failure."}
+        removal_grace_ms: {type: integer, format: int64, minimum: 0, default: 60000, description: How long a target that disappeared from a successful refresh keeps its in-flight requests before deletion. It takes no new traffic during that window. Zero deletes it at once.}
+    DiscoverySource:
+      allOf:
+        - type: object
+          required: [id, service_id, created_at, updated_at]
+          properties:
+            id: {$ref: '#/components/schemas/Id'}
+            service_id: {$ref: '#/components/schemas/Id'}
+            created_at: {$ref: '#/components/schemas/Timestamp'}
+            updated_at: {$ref: '#/components/schemas/Timestamp'}
+        - $ref: '#/components/schemas/DiscoverySourceInput'
+    DiscoverySourceStatus:
+      type: object
+      required: [source_id, state, last_attempt_at, last_success_at, next_refresh_at, revision, endpoint_count, active_count, draining_count, stale_count, last_error]
+      properties:
+        source_id: {$ref: '#/components/schemas/Id'}
+        state:
+          type: string
+          example: healthy
+          description: >-
+            pending before the first refresh finishes, healthy after a refresh succeeded, failing
+            while refreshes fail but the last known good endpoints are still within stale_after_ms,
+            stale once that window has passed, and disabled when the source is turned off.
+        last_attempt_at: {allOf: [{$ref: '#/components/schemas/Timestamp'}], nullable: true, description: "When the last refresh ran, successful or not."}
+        last_success_at: {allOf: [{$ref: '#/components/schemas/Timestamp'}], nullable: true, description: When the endpoint set was last resolved successfully. It anchors stale_after_ms.}
+        next_refresh_at: {allOf: [{$ref: '#/components/schemas/Timestamp'}], nullable: true, description: When the next scheduled refresh is due. Null while the source is disabled.}
+        revision: {type: string, nullable: true, example: '7', description: "Opaque token for the applied endpoint set. It changes when a provider revision changes or the normalized endpoint set changes. Null before the first successful refresh."}
+        endpoint_count: {type: integer, minimum: 0, description: Endpoints in the last applied result.}
+        active_count: {type: integer, minimum: 0, description: Targets taking new traffic.}
+        draining_count: {type: integer, minimum: 0, description: Targets inside the removal grace period.}
+        stale_count: {type: integer, minimum: 0, description: Last known good targets kept past stale_after_ms.}
+        last_error: {type: string, nullable: true, example: 'lookup timed out after 5000ms', description: Why the last attempt failed. Cleared by the next success.}
     RouteSplit:
       type: object
       required: [service_id, weight]
@@ -1848,14 +2096,21 @@ components:
         name: {type: string}
         description: {type: string}
         wasm_base64: {type: string, format: byte}
+    ExportDiscoverySource:
+      type: object
+      required: [service_id, source]
+      properties:
+        service_id: {$ref: '#/components/schemas/Id'}
+        source: {$ref: '#/components/schemas/DiscoverySource'}
     ExportDocument:
       type: object
-      required: [raahi_export_version, settings, services, routes, stream_routes, plugins, consumers, certificates, wasm_modules]
+      required: [raahi_export_version, settings, services, discovery_sources, routes, stream_routes, plugins, consumers, certificates, wasm_modules]
       properties:
         acme: {$ref: '#/components/schemas/AcmeBackupState'}
         raahi_export_version: {type: integer, enum: [1]}
         settings: {$ref: '#/components/schemas/Settings'}
         services: {type: array, items: {$ref: '#/components/schemas/ExportService'}}
+        discovery_sources: {type: array, items: {$ref: '#/components/schemas/ExportDiscoverySource'}}
         routes: {type: array, items: {$ref: '#/components/schemas/Route'}}
         stream_routes: {type: array, items: {$ref: '#/components/schemas/StreamRoute'}}
         plugins: {type: array, items: {$ref: '#/components/schemas/Plugin'}}
@@ -1868,10 +2123,11 @@ components:
       description: Export-shaped document. Entity IDs are remapped. Redacted certificates and dangling references may be skipped.
     ImportReport:
       type: object
-      required: [services, targets, routes, stream_routes, plugins, consumers, credentials, certificates, wasm_modules, skipped]
+      required: [services, targets, discovery_sources, routes, stream_routes, plugins, consumers, credentials, certificates, wasm_modules, skipped]
       properties:
         services: {type: integer, minimum: 0}
         targets: {type: integer, minimum: 0}
+        discovery_sources: {type: integer, minimum: 0}
         routes: {type: integer, minimum: 0}
         stream_routes: {type: integer, minimum: 0}
         plugins: {type: integer, minimum: 0}

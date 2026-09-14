@@ -26,6 +26,7 @@ async fn crud_and_snapshot_roundtrip() {
     // Service + two targets.
     let svc = store
         .create_service(&ServiceSpec {
+            upstream_authority: None,
             name: "api".into(),
             protocol: Protocol::Http,
             connect_timeout_ms: 1000,
@@ -44,6 +45,7 @@ async fn crud_and_snapshot_roundtrip() {
             .create_target(
                 svc.id,
                 &TargetSpec {
+                    priority: 0,
                     host: "127.0.0.1".into(),
                     port,
                     weight: 100,
@@ -121,6 +123,7 @@ async fn crud_and_snapshot_roundtrip() {
         .update_service(
             svc.id,
             &ServiceSpec {
+                upstream_authority: None,
                 name: "api2".into(),
                 protocol: Protocol::Https,
                 connect_timeout_ms: 1000,
@@ -190,6 +193,7 @@ async fn unique_violation_maps_to_conflict() {
     let url = tmp_db();
     let store = Store::connect(&url).await.unwrap();
     let spec = ServiceSpec {
+        upstream_authority: None,
         name: "dup".into(),
         protocol: Protocol::Http,
         connect_timeout_ms: 1000,
@@ -463,4 +467,152 @@ async fn eab_secrets_are_scoped_by_directory_and_survive_backup_restore() {
     .unwrap();
     store.import(&old_backup).await.unwrap();
     assert!(store.list_acme_eab().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn discovery_reconciliation_preserves_ids_and_drains_missing_targets() {
+    use std::collections::BTreeMap;
+    let url = tmp_db();
+    let store = Store::connect(&url).await.unwrap();
+    let service = store
+        .create_service(&ServiceSpec {
+            name: "discovered".into(),
+            protocol: Protocol::Http,
+            connect_timeout_ms: 1000,
+            read_timeout_ms: 1000,
+            write_timeout_ms: 1000,
+            retries: 0,
+            lb_algorithm: LbAlgorithm::RoundRobin,
+            upstream_authority: Some("api.internal".into()),
+            tls_sni: None,
+            health_path: None,
+        })
+        .await
+        .unwrap();
+    let source = store
+        .create_discovery_source(
+            service.id,
+            &DiscoverySourceSpec {
+                name: "registry".into(),
+                provider: "http".into(),
+                config: serde_json::json!({"url":"http://registry.test"}),
+                enabled: true,
+                stale_after_ms: 1000,
+                removal_grace_ms: 60_000,
+            },
+        )
+        .await
+        .unwrap();
+    let endpoint = DiscoveredEndpoint {
+        key: "a".into(),
+        host: "10.0.0.1".into(),
+        port: 8080,
+        weight: 20,
+        priority: 5,
+        metadata: BTreeMap::from([("zone".into(), "a".into())]),
+    };
+    store
+        .reconcile_discovery(
+            &source,
+            std::slice::from_ref(&endpoint),
+            "1",
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
+    let first = store.list_targets_for(service.id).await.unwrap();
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].priority, 5);
+    assert_eq!(first[0].source_id, Some(source.id));
+    assert_eq!(first[0].state, TargetState::Active);
+
+    store
+        .reconcile_discovery(
+            &source,
+            std::slice::from_ref(&endpoint),
+            "1",
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store.list_targets_for(service.id).await.unwrap()[0].id,
+        first[0].id
+    );
+
+    store
+        .reconcile_discovery(&source, &[], "2", chrono::Utc::now())
+        .await
+        .unwrap();
+    let draining = store.list_targets_for(service.id).await.unwrap();
+    assert_eq!(draining[0].state, TargetState::Draining);
+    assert!(
+        !store
+            .build_snapshot()
+            .await
+            .unwrap()
+            .targets
+            .contains_key(&service.id)
+    );
+}
+
+#[tokio::test]
+async fn discovery_failure_marks_targets_stale_and_unusable() {
+    use std::collections::BTreeMap;
+    let url = tmp_db();
+    let store = Store::connect(&url).await.unwrap();
+    let service = store
+        .create_service(&ServiceSpec {
+            name: "stale".into(),
+            protocol: Protocol::Http,
+            connect_timeout_ms: 1000,
+            read_timeout_ms: 1000,
+            write_timeout_ms: 1000,
+            retries: 0,
+            lb_algorithm: LbAlgorithm::RoundRobin,
+            upstream_authority: None,
+            tls_sni: None,
+            health_path: None,
+        })
+        .await
+        .unwrap();
+    let source = store
+        .create_discovery_source(
+            service.id,
+            &DiscoverySourceSpec {
+                name: "dns".into(),
+                provider: "dns".into(),
+                config: serde_json::json!({"hostname":"api.test","port":80}),
+                enabled: true,
+                stale_after_ms: 0,
+                removal_grace_ms: 0,
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .reconcile_discovery(
+            &source,
+            &[DiscoveredEndpoint {
+                key: "a".into(),
+                host: "10.0.0.1".into(),
+                port: 80,
+                weight: 100,
+                priority: 0,
+                metadata: BTreeMap::new(),
+            }],
+            "1",
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        store
+            .record_discovery_failure(&source, "dns down", chrono::Utc::now())
+            .await
+            .unwrap()
+    );
+    let target = &store.list_targets_for(service.id).await.unwrap()[0];
+    assert_eq!(target.state, TargetState::Stale);
+    assert!(!target.enabled);
 }
