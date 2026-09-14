@@ -1,6 +1,6 @@
 # Raahi — justfile
 # Run `just` to see all recipes, or `just --list` for grouped output.
-# Requires: just, cargo/rustc ≥1.84, pnpm ≥9 (or npm), cmake + Go + Perl + C/C++ toolchain
+# Requires: just, cargo/rustc ≥1.85, pnpm ≥9 (or npm), cmake + Go + Perl + C/C++ toolchain
 # For `just dist` (static musl binary): cargo-zigbuild + zig  →  `uv tool install cargo-zigbuild`
 # Docs: https://just.systems  |  Project: https://github.com/iamd3vil/raahi
 
@@ -50,7 +50,7 @@ doctor:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "== toolchain =="
-    printf "%-12s " "rustc:"; rustc --version 2>&1 || echo "MISSING (need ≥1.84)"
+    printf "%-12s " "rustc:"; rustc --version 2>&1 || echo "MISSING (need ≥1.85)"
     printf "%-12s " "cargo:"; cargo --version 2>&1 || echo "MISSING"
     printf "%-12s " "just:";  just --version 2>&1  || echo "MISSING"
     printf "%-12s " "node:";  node --version 2>&1  || echo "MISSING (need ≥20)"
