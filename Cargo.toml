@@ -1,6 +1,6 @@
 [package]
 name = "raahi"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "A fast, self-hosted reverse proxy and API gateway"
 license = "GPL-3.0-only"
@@ -38,7 +38,7 @@ members = ["crates/*"]
 
 [workspace.package]
 edition = "2024"
-version = "0.1.0"
+version = "0.2.0"
 license = "GPL-3.0-only"
 homepage = "https://raahi.sarat.dev"
 repository = "https://github.com/iamd3vil/raahi"

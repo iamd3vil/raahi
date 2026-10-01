@@ -2775,7 +2775,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "raahi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2794,7 +2794,7 @@ dependencies = [
 
 [[package]]
 name = "raahi-acme"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2820,7 +2820,7 @@ dependencies = [
 
 [[package]]
 name = "raahi-api"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -2854,7 +2854,7 @@ dependencies = [
 
 [[package]]
 name = "raahi-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "regex",
@@ -2865,7 +2865,7 @@ dependencies = [
 
 [[package]]
 name = "raahi-discovery"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2884,7 +2884,7 @@ dependencies = [
 
 [[package]]
 name = "raahi-proxy"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -2910,7 +2910,7 @@ dependencies = [
 
 [[package]]
 name = "raahi-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64",
  "chrono",

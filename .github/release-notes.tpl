@@ -1,6 +1,17 @@
 # Raahi {{ meta.tag }}
 
-Raahi's first public release.
+Adds service discovery.
+
+## What's new
+
+- Service discovery: a service's targets can now come from DNS (A/AAAA), DNS SRV records, or an HTTP registry. Raahi polls each source, adds new endpoints, and retires stale ones after a configurable grace period.
+- Operator-created and discovered targets can coexist in the same service.
+- Discovery sources are managed through the REST API and the admin UI. Reading or changing them requires the admin role.
+- Targets now carry a priority.
+
+## Upgrading
+
+Raahi applies migration `0011_service_discovery.sql` on first start. It only adds tables and columns, but back up your database before upgrading, since Raahi does not roll migrations back.
 
 ## Included
 
@@ -9,6 +20,7 @@ Raahi's first public release.
 - Reverse proxying for HTTP, HTTPS, WebSocket, and TCP traffic
 - SNI certificate selection and ACME certificate management
 - Route matching, load balancing, health checks, traffic splitting, and policy plugins
+- Service discovery from DNS, SRV, and HTTP registries
 - Admin UI, REST API, Prometheus metrics, and JSON backup and restore
 
 ## Install

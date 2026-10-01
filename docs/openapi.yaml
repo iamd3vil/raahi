@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Raahi Admin API
-  version: 0.1.0
+  version: 0.2.0
   description: |
     Control plane for Raahi's reverse-proxy configuration and runtime state.
 
