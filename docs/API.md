@@ -24,7 +24,7 @@ binds to `127.0.0.1:9080`. After that every request must carry one of:
 |------|-----|
 | `viewer` | `GET` anything (except the user list, SSO settings, and secret exports). |
 | `editor` | Everything a viewer may, plus create/update/delete gateway configuration. |
-| `admin`  | Everything, plus `/users`, `/sso/config`, `/admin/token`, `PUT /settings`, the Cloudflare token, `/import`, and `GET /export?include_secrets=true`. |
+| `admin`  | Everything, plus `/users`, `/sso/config`, `/admin/token`, `PUT /settings`, the Cloudflare token, `/import`, `/config/apply`, `/config/current`, and `GET /export?include_secrets=true`. |
 
 Insufficient role returns `403 {"error":"forbidden: requires the editor role"}`.
 
@@ -134,6 +134,79 @@ curl -fsS -H "Authorization: Bearer $RAAHI_TOKEN" \
 Mutations are persisted and hot-reloaded before the response is returned. `PUT` bodies are
 full replacements: include every value you want to retain. Omitted optional values reset to
 their documented defaults.
+
+## Config files
+
+You can keep the gateway configuration in a YAML, HUML, or JSON file and apply it through the
+API. The file uses names instead of IDs: routes name their service, and plugins sit under the
+service or route they apply to.
+
+```yaml
+raahi_config: 1
+
+services:
+  - name: orders
+    health_path: /healthz
+    targets:
+      - { host: 10.0.0.5, port: 8080 }
+    plugins:                 # service-scoped
+      - { type: rate-limit, config: { limit: 100, window_secs: 1 } }
+
+routes:
+  - name: orders-api
+    service: orders
+    hosts: [api.example.com]
+    paths: [/orders]
+    plugins:                 # route-scoped
+      - { type: key-auth }
+
+plugins:                     # global
+  - { type: request-id }
+
+consumers:
+  - username: ci
+    credentials:
+      - { type: key-auth, identifier: "${CI_API_KEY}" }
+
+certificates:
+  - name: api
+    sni: [api.example.com]
+    acme_config: { challenge: dns-01, email: ops@example.com }
+```
+
+Apply it with the `raahi` binary. It reads `RAAHI_URL` (default `http://127.0.0.1:9080`) and
+`RAAHI_TOKEN`:
+
+```bash
+raahi apply -f raahi.yaml --dry-run   # print the plan, change nothing
+raahi apply -f raahi.yaml
+raahi dump --format huml > raahi.huml # current state as a starting file
+```
+
+How apply works:
+
+- Entities are matched by name: targets by host and port, and plugins by type and position
+  among the same owner's plugins of that type. Apply creates what is new, updates what changed,
+  and deletes what is gone, all in one transaction. Unchanged entities keep their IDs,
+  discovered targets, health state, and issued certificates.
+- A top-level section missing from the file (`routes`, `consumers`, and so on) is left alone.
+  A section that is present, even as `[]`, is fully managed, so entries made in the UI that
+  are not in the file are deleted on the next apply. Use `--dry-run` to check first.
+- Apply refuses to delete a service that a route outside the file still uses.
+- `raahi apply` replaces `${NAME}` in string values with environment variables on the machine
+  running the command, before sending the file. An unset variable is an error. Write `$${` for
+  a literal `${`. The server never expands variables.
+- An omitted credential `secret` or certificate `cert_pem`/`key_pem` keeps the stored value,
+  so a dump re-applies as a no-op. New basic-auth and jwt credentials need a secret.
+- Settings, WASM modules, ACME accounts and EAB credentials, the Cloudflare token, and users
+  are not part of the file. Manage them through the API or UI. `/export` and `/import` remain
+  the way to take and restore full backups.
+
+Without the CLI, `POST /api/v1/config/apply` accepts the file directly with
+`Content-Type: application/yaml`, `application/huml`, or `application/json`, plus an optional
+`?dry_run=true`. `GET /api/v1/config/current?format=yaml|huml|json` returns the dump. Both need
+the admin role. The dump contains key-auth API keys, plugin configs, and discovery configs, so
+handle it as sensitive.
 
 ## Operational details
 

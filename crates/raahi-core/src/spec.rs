@@ -9,32 +9,32 @@ use serde::{Deserialize, Serialize};
 use crate::Id;
 use crate::model::*;
 
-fn d_http() -> Protocol {
+pub(crate) fn d_http() -> Protocol {
     Protocol::Http
 }
-fn d_connect() -> u64 {
+pub(crate) fn d_connect() -> u64 {
     5_000
 }
-fn d_read() -> u64 {
+pub(crate) fn d_read() -> u64 {
     60_000
 }
-fn d_write() -> u64 {
+pub(crate) fn d_write() -> u64 {
     60_000
 }
-fn d_retries() -> u32 {
+pub(crate) fn d_retries() -> u32 {
     1
 }
-fn d_weight() -> u32 {
+pub(crate) fn d_weight() -> u32 {
     100
 }
-fn d_true() -> bool {
+pub(crate) fn d_true() -> bool {
     true
 }
-fn d_obj() -> serde_json::Value {
+pub(crate) fn d_obj() -> serde_json::Value {
     serde_json::json!({})
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ServiceSpec {
     pub name: String,
     #[serde(default = "d_http")]
@@ -58,7 +58,7 @@ pub struct ServiceSpec {
     pub health_path: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TargetSpec {
     pub host: String,
     pub port: u16,
@@ -70,7 +70,7 @@ pub struct TargetSpec {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DiscoverySourceSpec {
     pub name: String,
     pub provider: String,
@@ -84,15 +84,15 @@ pub struct DiscoverySourceSpec {
     pub removal_grace_ms: u64,
 }
 
-fn d_stale_after() -> u64 {
+pub(crate) fn d_stale_after() -> u64 {
     300_000
 }
 
-fn d_removal_grace() -> u64 {
+pub(crate) fn d_removal_grace() -> u64 {
     60_000
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RouteSpec {
     pub name: String,
     pub service_id: Id,
@@ -118,7 +118,7 @@ pub struct RouteSpec {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StreamRouteSpec {
     pub name: String,
     /// Local address the listener binds (must parse as a socket address).

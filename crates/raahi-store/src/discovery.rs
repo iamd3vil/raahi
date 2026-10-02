@@ -5,7 +5,7 @@ use raahi_core::{
     DiscoveredEndpoint, DiscoverySource, DiscoverySourceSpec, DiscoverySourceStatus,
     DiscoveryState, Id,
 };
-use sqlx::Row;
+use sqlx::{Row, SqliteConnection};
 
 use crate::rows::{map_discovery_source, parse_dt};
 use crate::{Store, StoreError};
@@ -57,35 +57,8 @@ impl Store {
         if self.get_service(service_id).await?.is_none() {
             return Err(StoreError::NotFound);
         }
-        let now = Utc::now().to_rfc3339();
         let mut tx = self.pool.begin().await?;
-        let id = sqlx::query(
-            "INSERT INTO discovery_sources
-             (service_id, name, provider, config, enabled, stale_after_ms, removal_grace_ms, created_at, updated_at)
-             VALUES (?,?,?,?,?,?,?,?,?)",
-        )
-        .bind(service_id)
-        .bind(source.name.trim())
-        .bind(&source.provider)
-        .bind(source.config.to_string())
-        .bind(source.enabled as i64)
-        .bind(source.stale_after_ms as i64)
-        .bind(source.removal_grace_ms as i64)
-        .bind(&now)
-        .bind(&now)
-        .execute(&mut *tx)
-        .await
-        .map_err(super::crud::map_err)?
-        .last_insert_rowid();
-        sqlx::query("INSERT INTO discovery_source_status (source_id, state) VALUES (?,?)")
-            .bind(id)
-            .bind(if source.enabled {
-                "pending"
-            } else {
-                "disabled"
-            })
-            .execute(&mut *tx)
-            .await?;
+        let id = insert_discovery_source(&mut tx, service_id, source).await?;
         tx.commit().await?;
         Ok(self.get_discovery_source(id).await?.unwrap())
     }
@@ -95,56 +68,10 @@ impl Store {
         id: Id,
         source: &DiscoverySourceSpec,
     ) -> Result<Option<DiscoverySource>, StoreError> {
-        let old = self.get_discovery_source(id).await?;
-        let now = Utc::now().to_rfc3339();
         let mut tx = self.pool.begin().await?;
-        let result = sqlx::query(
-            "UPDATE discovery_sources SET name=?, provider=?, config=?, enabled=?,
-             stale_after_ms=?, removal_grace_ms=?, updated_at=? WHERE id=?",
-        )
-        .bind(source.name.trim())
-        .bind(&source.provider)
-        .bind(source.config.to_string())
-        .bind(source.enabled as i64)
-        .bind(source.stale_after_ms as i64)
-        .bind(source.removal_grace_ms as i64)
-        .bind(&now)
-        .bind(id)
-        .execute(&mut *tx)
-        .await
-        .map_err(super::crud::map_err)?;
-        if result.rows_affected() == 0 {
+        if !update_discovery_source_in(&mut tx, id, source).await? {
             tx.rollback().await?;
             return Ok(None);
-        }
-        sqlx::query(
-            "UPDATE discovery_source_status SET state=?, next_refresh_at=NULL WHERE source_id=?",
-        )
-        .bind(if source.enabled {
-            "pending"
-        } else {
-            "disabled"
-        })
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
-        if let Some(old) = old
-            && old.provider != source.provider
-        {
-            sqlx::query("DELETE FROM targets WHERE source_id=?")
-                .bind(id)
-                .execute(&mut *tx)
-                .await?;
-        }
-        if !source.enabled {
-            sqlx::query(
-                "UPDATE targets SET state='draining', missing_since=COALESCE(missing_since, ?)
-                 WHERE source_id=? AND state!='draining'",
-            )
-            .bind(&now)
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
         }
         tx.commit().await?;
         self.get_discovery_source(id).await
@@ -425,4 +352,102 @@ impl Store {
         result.changed = result.added + result.updated + result.draining + result.removed > 0;
         Ok(result)
     }
+}
+
+/// Insert a source plus its status row (shared by the API and declarative apply).
+pub(crate) async fn insert_discovery_source(
+    conn: &mut SqliteConnection,
+    service_id: Id,
+    source: &DiscoverySourceSpec,
+) -> Result<Id, StoreError> {
+    let now = Utc::now().to_rfc3339();
+    let id = sqlx::query(
+        "INSERT INTO discovery_sources
+         (service_id, name, provider, config, enabled, stale_after_ms, removal_grace_ms, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?)",
+    )
+    .bind(service_id)
+    .bind(source.name.trim())
+    .bind(&source.provider)
+    .bind(source.config.to_string())
+    .bind(source.enabled as i64)
+    .bind(source.stale_after_ms as i64)
+    .bind(source.removal_grace_ms as i64)
+    .bind(&now)
+    .bind(&now)
+    .execute(&mut *conn)
+    .await
+    .map_err(super::crud::map_err)?
+    .last_insert_rowid();
+    sqlx::query("INSERT INTO discovery_source_status (source_id, state) VALUES (?,?)")
+        .bind(id)
+        .bind(if source.enabled {
+            "pending"
+        } else {
+            "disabled"
+        })
+        .execute(&mut *conn)
+        .await?;
+    Ok(id)
+}
+
+/// Update a source and reset its status. A provider change drops its targets;
+/// disabling drains them. Returns `false` if the source doesn't exist.
+pub(crate) async fn update_discovery_source_in(
+    conn: &mut SqliteConnection,
+    id: Id,
+    source: &DiscoverySourceSpec,
+) -> Result<bool, StoreError> {
+    let old_provider: Option<String> =
+        sqlx::query_scalar("SELECT provider FROM discovery_sources WHERE id=?")
+            .bind(id)
+            .fetch_optional(&mut *conn)
+            .await?;
+    let Some(old_provider) = old_provider else {
+        return Ok(false);
+    };
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        "UPDATE discovery_sources SET name=?, provider=?, config=?, enabled=?,
+         stale_after_ms=?, removal_grace_ms=?, updated_at=? WHERE id=?",
+    )
+    .bind(source.name.trim())
+    .bind(&source.provider)
+    .bind(source.config.to_string())
+    .bind(source.enabled as i64)
+    .bind(source.stale_after_ms as i64)
+    .bind(source.removal_grace_ms as i64)
+    .bind(&now)
+    .bind(id)
+    .execute(&mut *conn)
+    .await
+    .map_err(super::crud::map_err)?;
+    sqlx::query(
+        "UPDATE discovery_source_status SET state=?, next_refresh_at=NULL WHERE source_id=?",
+    )
+    .bind(if source.enabled {
+        "pending"
+    } else {
+        "disabled"
+    })
+    .bind(id)
+    .execute(&mut *conn)
+    .await?;
+    if old_provider != source.provider {
+        sqlx::query("DELETE FROM targets WHERE source_id=?")
+            .bind(id)
+            .execute(&mut *conn)
+            .await?;
+    }
+    if !source.enabled {
+        sqlx::query(
+            "UPDATE targets SET state='draining', missing_since=COALESCE(missing_since, ?)
+             WHERE source_id=? AND state!='draining'",
+        )
+        .bind(&now)
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(true)
 }

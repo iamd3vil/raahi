@@ -616,3 +616,195 @@ async fn discovery_failure_marks_targets_stale_and_unusable() {
     assert_eq!(target.state, TargetState::Stale);
     assert!(!target.enabled);
 }
+
+const DECLARATIVE: &str = r#"
+raahi_config: 1
+services:
+  - name: api
+    targets:
+      - { host: 10.0.0.1, port: 8080 }
+      - { host: 10.0.0.2, port: 8080, weight: 50 }
+    discovery:
+      - { name: registry, provider: http, config: { url: "http://registry.test" } }
+    plugins:
+      - { type: rate-limit, config: { limit: 10 } }
+  - name: canary
+    targets:
+      - { host: 10.0.1.1, port: 8080 }
+routes:
+  - name: api
+    service: api
+    hosts: [api.example.com]
+    paths: [/]
+    splits:
+      - { service: api, weight: 9 }
+      - { service: canary, weight: 1 }
+    plugins:
+      - { type: key-auth }
+stream_routes:
+  - { name: pg, listen_addr: "127.0.0.1:15432", service: api }
+plugins:
+  - { type: cors }
+consumers:
+  - username: ci
+    groups: [internal]
+    credentials:
+      - { type: key-auth, identifier: ci-key }
+certificates:
+  - name: api
+    sni: [api.example.com]
+    acme_config: { challenge: dns-01, directory_url: "https://acme-staging-v02.api.letsencrypt.org/directory" }
+"#;
+
+fn doc(text: &str) -> ConfigDoc {
+    parse_config(text, ConfigFormat::Yaml).unwrap()
+}
+
+#[tokio::test]
+async fn declarative_apply_reconciles_by_name_and_keeps_ids() {
+    use raahi_store::ChangeAction;
+    let store = Store::connect(&tmp_db()).await.unwrap();
+
+    let report = store.apply_config(&doc(DECLARATIVE), false).await.unwrap();
+    assert!(
+        report
+            .changes
+            .iter()
+            .all(|c| c.action == ChangeAction::Create)
+    );
+    assert!(report.touched("certificate") && report.touched("discovery_source"));
+    // A key-auth identifier is the key itself; reports must not leak it.
+    assert!(report.changes.iter().all(|c| !c.name.contains("ci-key")));
+    let route = store.list_routes().await.unwrap().remove(0);
+    let services = store.list_services().await.unwrap();
+    assert_eq!(route.splits.len(), 2);
+    assert_eq!(route.splits[1].service_id, services[1].id);
+
+    // Discovered targets and ACME issuance state are runtime state, not config.
+    let source = store.list_discovery_sources().await.unwrap().remove(0);
+    let endpoint = DiscoveredEndpoint {
+        key: "a".into(),
+        host: "10.9.9.9".into(),
+        port: 80,
+        weight: 100,
+        priority: 0,
+        metadata: Default::default(),
+    };
+    store
+        .reconcile_discovery(&source, &[endpoint], "1", chrono::Utc::now())
+        .await
+        .unwrap();
+    let cert = store.list_certificates().await.unwrap().remove(0);
+    let issued = AcmeStatus {
+        state: AcmeState::Issued,
+        ..AcmeStatus::pending()
+    };
+    store
+        .update_acme_certificate(cert.id, "CERT", "KEY", &issued)
+        .await
+        .unwrap();
+
+    // Re-applying the same file, or a dump of the current state, is a no-op.
+    let again = store.apply_config(&doc(DECLARATIVE), false).await.unwrap();
+    assert!(again.changes.is_empty(), "{:?}", again.changes);
+    let dumped = store.current_config().await.unwrap();
+    for format in [ConfigFormat::Yaml, ConfigFormat::Huml, ConfigFormat::Json] {
+        let text = render_config(&dumped, format).unwrap();
+        let back = parse_config(&text, format).unwrap();
+        let report = store.apply_config(&back, false).await.unwrap();
+        assert!(
+            report.changes.is_empty(),
+            "{format:?}: {:?}",
+            report.changes
+        );
+    }
+    assert_eq!(store.list_all_targets().await.unwrap().len(), 4);
+    let cert = store.list_certificates().await.unwrap().remove(0);
+    assert_eq!(cert.acme_status.unwrap().state, AcmeState::Issued);
+
+    // Drop the canary and retarget the route: a dry run reports it and writes nothing.
+    let edited = DECLARATIVE
+        .replace("      - { service: canary, weight: 1 }\n", "")
+        .replace(
+            "  - name: canary\n    targets:\n      - { host: 10.0.1.1, port: 8080 }\n",
+            "",
+        )
+        .replace(
+            "[api.example.com]\n    paths",
+            "[api2.example.com]\n    paths",
+        );
+    let plan = store.apply_config(&doc(&edited), true).await.unwrap();
+    let mut summary: Vec<_> = plan
+        .changes
+        .iter()
+        .map(|c| format!("{:?} {} {}", c.action, c.kind, c.name))
+        .collect();
+    summary.sort();
+    assert_eq!(summary, ["Delete service canary", "Update route api"]);
+    assert_eq!(store.list_services().await.unwrap().len(), 2);
+
+    store.apply_config(&doc(&edited), false).await.unwrap();
+    let after = store.list_routes().await.unwrap().remove(0);
+    assert_eq!(after.id, route.id);
+    assert_eq!(after.hosts, ["api2.example.com"]);
+    assert_eq!(store.list_plugins().await.unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn declarative_apply_leaves_absent_sections_and_guards_references() {
+    let store = Store::connect(&tmp_db()).await.unwrap();
+    store.apply_config(&doc(DECLARATIVE), false).await.unwrap();
+
+    // Only routes managed: consumers, certificates and global plugins stay.
+    let routes_only = "raahi_config: 1\nroutes:\n  - { name: other, service: canary }\n";
+    let report = store.apply_config(&doc(routes_only), false).await.unwrap();
+    assert_eq!(report.changes.len(), 2, "{:?}", report.changes); // -api +other
+    assert_eq!(store.list_consumers().await.unwrap().len(), 1);
+    assert_eq!(store.list_certificates().await.unwrap().len(), 1);
+    assert_eq!(store.list_services().await.unwrap().len(), 2);
+
+    // Dropping a service that an unmanaged route still uses fails atomically.
+    let services_only = "raahi_config: 1\nservices:\n  - { name: api }\n";
+    let err = store
+        .apply_config(&doc(services_only), false)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("canary") && err.contains("other"), "{err}");
+    assert_eq!(store.list_services().await.unwrap().len(), 2);
+    assert_eq!(store.list_all_targets().await.unwrap().len(), 3);
+
+    // Routes in the file can't reference unknown services.
+    let dangling = "raahi_config: 1\nroutes:\n  - { name: x, service: nope }\n";
+    let err = store.apply_config(&doc(dangling), false).await.unwrap_err();
+    assert!(err.to_string().contains("nope"), "{err}");
+
+    let dup = "raahi_config: 1\nconsumers:\n  - { username: a }\n  - { username: a }\n";
+    assert!(store.apply_config(&doc(dup), false).await.is_err());
+    let version = "raahi_config: 2\n";
+    assert!(store.apply_config(&doc(version), false).await.is_err());
+}
+
+#[tokio::test]
+async fn declarative_apply_keeps_omitted_secrets() {
+    let store = Store::connect(&tmp_db()).await.unwrap();
+    let with_secret = r#"
+raahi_config: 1
+consumers:
+  - username: alice
+    credentials:
+      - { type: basic-auth, identifier: alice, secret: "$2b$04$hash" }
+"#;
+    store.apply_config(&doc(with_secret), false).await.unwrap();
+    // A dump has no secret; applying it keeps the stored one.
+    let without = with_secret.replace(", secret: \"$2b$04$hash\"", "");
+    let report = store.apply_config(&doc(&without), false).await.unwrap();
+    assert!(report.changes.is_empty(), "{:?}", report.changes);
+    let cred = store.list_all_credentials().await.unwrap().remove(0);
+    assert_eq!(cred.secret.as_deref(), Some("$2b$04$hash"));
+
+    // A new credential without its secret is rejected.
+    let new = without.replace("identifier: alice", "identifier: bob");
+    let err = store.apply_config(&doc(&new), false).await.unwrap_err();
+    assert!(err.to_string().contains("secret is required"), "{err}");
+}

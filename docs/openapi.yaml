@@ -1206,6 +1206,62 @@ paths:
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/config/apply:
+    post:
+      tags: [Configuration]
+      summary: Apply a declarative config file
+      description: >-
+        Reconciles the configuration against a name-keyed config file (JSON, YAML or
+        HUML, chosen by Content-Type) in one transaction. Entities are matched by name,
+        so unchanged ones keep their IDs, discovered targets, health state and issued
+        certificates. Top-level sections missing from the file are left untouched; a
+        present section (even empty) is fully managed. Omitted credential secrets and
+        certificate PEMs keep the stored ones. `raahi apply` wraps this endpoint and fills
+        `${VAR}` references from the client environment first. Admin only.
+      operationId: applyConfigFile
+      parameters:
+        - name: dry_run
+          in: query
+          description: Report the planned changes without applying them.
+          schema: {type: boolean, default: false}
+      requestBody:
+        required: true
+        content:
+          application/json: {schema: {$ref: '#/components/schemas/ConfigDocument'}}
+          application/yaml: {schema: {$ref: '#/components/schemas/ConfigDocument'}}
+          application/huml: {schema: {$ref: '#/components/schemas/ConfigDocument'}}
+      responses:
+        '200':
+          description: The changes applied, or planned for a dry run.
+          content: {application/json: {schema: {$ref: '#/components/schemas/ApplyReport'}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/config/current:
+    get:
+      tags: [Configuration]
+      summary: Dump the current configuration as a config file
+      description: >-
+        Every section is present. Credential secrets and certificate PEMs are omitted;
+        key-auth identifiers (the API keys themselves), plugin configs and discovery
+        configs are included. Applying the dump unchanged is a no-op. Admin only.
+      operationId: currentConfigFile
+      parameters:
+        - name: format
+          in: query
+          schema: {type: string, enum: [yaml, huml, json], default: yaml}
+      responses:
+        '200':
+          description: Config file in the requested format.
+          content:
+            application/yaml: {schema: {$ref: '#/components/schemas/ConfigDocument'}}
+            application/huml: {schema: {$ref: '#/components/schemas/ConfigDocument'}}
+            application/json: {schema: {$ref: '#/components/schemas/ConfigDocument'}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '500': {$ref: '#/components/responses/InternalError'}
 components:
   securitySchemes:
     AdminBearer:
@@ -2121,6 +2177,160 @@ components:
       allOf:
         - $ref: '#/components/schemas/ExportDocument'
       description: Export-shaped document. Entity IDs are remapped. Redacted certificates and dangling references may be skipped.
+    ConfigDocument:
+      type: object
+      additionalProperties: false
+      required: [raahi_config]
+      properties:
+        raahi_config: {type: integer, enum: [1]}
+        services: {type: array, items: {$ref: '#/components/schemas/ConfigService'}}
+        routes: {type: array, items: {$ref: '#/components/schemas/ConfigRoute'}}
+        stream_routes:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, listen_addr, service]
+            properties:
+              name: {type: string}
+              listen_addr: {type: string, example: '0.0.0.0:5432'}
+              service: {type: string, description: Service name.}
+              enabled: {type: boolean, default: true}
+        plugins:
+          type: array
+          description: Global plugins.
+          items: {$ref: '#/components/schemas/ConfigPlugin'}
+        consumers:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [username]
+            properties:
+              username: {type: string}
+              groups: {type: array, items: {type: string}}
+              credentials:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [type, identifier]
+                  properties:
+                    type: {type: string, enum: [key-auth, basic-auth, jwt]}
+                    identifier: {type: string}
+                    secret: {type: string, description: Omit to keep the stored secret of an existing credential.}
+                    algorithm: {type: string, enum: [HS256, HS384, HS512, RS256]}
+        certificates:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name]
+            description: Either acme_config, or cert_pem and key_pem. Omitted PEMs keep the stored ones.
+            properties:
+              name: {type: string}
+              sni: {type: array, items: {type: string}}
+              cert_pem: {type: string}
+              key_pem: {type: string}
+              acme_config: {$ref: '#/components/schemas/AcmeConfig'}
+    ConfigService:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: {type: string}
+        protocol: {type: string, enum: [http, https], default: http}
+        connect_timeout_ms: {type: integer, default: 5000}
+        read_timeout_ms: {type: integer, default: 60000}
+        write_timeout_ms: {type: integer, default: 60000}
+        retries: {type: integer, default: 1}
+        lb_algorithm: {type: string, enum: [round_robin, random, consistent, weighted], default: round_robin}
+        upstream_authority: {type: string}
+        tls_sni: {type: string}
+        health_path: {type: string}
+        targets:
+          type: array
+          description: Manual targets, matched by host and port.
+          items:
+            type: object
+            additionalProperties: false
+            required: [host, port]
+            properties:
+              host: {type: string}
+              port: {type: integer, minimum: 1, maximum: 65535}
+              weight: {type: integer, default: 100}
+              priority: {type: integer, default: 0}
+              enabled: {type: boolean, default: true}
+        discovery:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, provider]
+            properties:
+              name: {type: string}
+              provider: {type: string}
+              config: {type: object, additionalProperties: true}
+              enabled: {type: boolean, default: true}
+              stale_after_ms: {type: integer, default: 300000}
+              removal_grace_ms: {type: integer, default: 60000}
+        plugins:
+          type: array
+          description: Service-scoped plugins.
+          items: {$ref: '#/components/schemas/ConfigPlugin'}
+    ConfigRoute:
+      type: object
+      additionalProperties: false
+      required: [name, service]
+      properties:
+        name: {type: string}
+        service: {type: string, description: Service name.}
+        priority: {type: integer, default: 0}
+        hosts: {type: array, items: {type: string}}
+        paths: {type: array, items: {type: string}}
+        methods: {type: array, items: {type: string}}
+        headers: {type: object, additionalProperties: {type: string}}
+        splits:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [service, weight]
+            properties:
+              service: {type: string}
+              weight: {type: integer, minimum: 1}
+        strip_path: {type: boolean, default: false}
+        preserve_host: {type: boolean, default: false}
+        enabled: {type: boolean, default: true}
+        plugins:
+          type: array
+          description: Route-scoped plugins.
+          items: {$ref: '#/components/schemas/ConfigPlugin'}
+    ConfigPlugin:
+      type: object
+      additionalProperties: false
+      required: [type]
+      description: Matched by type and position among same-type plugins of the same owner.
+      properties:
+        type: {type: string, example: key-auth}
+        config: {type: object, additionalProperties: true}
+        ordering: {type: integer, default: 0}
+        enabled: {type: boolean, default: true}
+    ApplyReport:
+      type: object
+      required: [dry_run, changes]
+      properties:
+        dry_run: {type: boolean}
+        changes:
+          type: array
+          items:
+            type: object
+            required: [action, kind, name]
+            properties:
+              action: {type: string, enum: [create, update, delete]}
+              kind: {type: string, enum: [service, target, discovery_source, route, stream_route, plugin, consumer, credential, certificate]}
+              name: {type: string, example: key-auth on route billing}
+        note: {type: string, description: Present when stream routes changed; listener changes take effect on restart.}
     ImportReport:
       type: object
       required: [services, targets, discovery_sources, routes, stream_routes, plugins, consumers, credentials, certificates, wasm_modules, skipped]

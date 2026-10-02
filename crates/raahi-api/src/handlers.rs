@@ -117,7 +117,7 @@ pub async fn delete_target(
 
 // ---- discovery ---------------------------------------------------------------
 
-fn validate_discovery_source(s: &AppState, spec: &DiscoverySourceSpec) -> ApiResult<()> {
+pub(crate) fn validate_discovery_source(s: &AppState, spec: &DiscoverySourceSpec) -> ApiResult<()> {
     if spec.name.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "discovery source name is required".into(),
@@ -240,8 +240,8 @@ pub async fn get_route(State(s): State<AppState>, Path(id): Path<Id>) -> ApiResu
 
 /// Route paths must be absolute prefixes (`/api`) or compilable `~` regexes
 /// (`~/users/\d+`); anything else would silently never match.
-fn validate_route_paths(spec: &RouteSpec) -> ApiResult<()> {
-    for p in &spec.paths {
+pub(crate) fn validate_route_paths(paths: &[String]) -> ApiResult<()> {
+    for p in paths {
         if raahi_core::is_regex_path(p) {
             raahi_core::compile_path_regex(p)
                 .map_err(|e| ApiError::BadRequest(format!("invalid regex path {p:?}: {e}")))?;
@@ -258,7 +258,7 @@ pub async fn create_route(
     State(s): State<AppState>,
     Json(spec): Json<RouteSpec>,
 ) -> ApiResult<Json<Route>> {
-    validate_route_paths(&spec)?;
+    validate_route_paths(&spec.paths)?;
     ensure_split_services_exist(&s, &spec).await?;
     let r = s.store.create_route(&spec).await?;
     reload(&s).await?;
@@ -270,7 +270,7 @@ pub async fn update_route(
     Path(id): Path<Id>,
     Json(spec): Json<RouteSpec>,
 ) -> ApiResult<Json<Route>> {
-    validate_route_paths(&spec)?;
+    validate_route_paths(&spec.paths)?;
     ensure_split_services_exist(&s, &spec).await?;
     let r = s
         .store
@@ -313,7 +313,7 @@ pub async fn delete_route(State(s): State<AppState>, Path(id): Path<Id>) -> ApiR
 
 /// Reminder attached to stream-route responses whenever the set of listen
 /// addresses changed: listeners bind at startup only (retargeting is live).
-const LISTENER_NOTE: &str = "listener changes take effect on restart";
+pub(crate) const LISTENER_NOTE: &str = "listener changes take effect on restart";
 
 /// listen_addr must be a valid socket address and the target service must exist.
 async fn validate_stream_route(s: &AppState, spec: &StreamRouteSpec) -> ApiResult<()> {
@@ -401,7 +401,7 @@ pub async fn create_plugin(
     Json(spec): Json<PluginSpec>,
 ) -> ApiResult<Json<Plugin>> {
     validate_plugin(&spec)?;
-    ensure_wasm_module_exists(&s, &spec).await?;
+    ensure_wasm_module_exists(&s, spec.plugin_type, &spec.config).await?;
     let p = s.store.create_plugin(&spec).await?;
     reload(&s).await?;
     Ok(Json(p))
@@ -413,7 +413,7 @@ pub async fn update_plugin(
     Json(spec): Json<PluginSpec>,
 ) -> ApiResult<Json<Plugin>> {
     validate_plugin(&spec)?;
-    ensure_wasm_module_exists(&s, &spec).await?;
+    ensure_wasm_module_exists(&s, spec.plugin_type, &spec.config).await?;
     let p = s
         .store
         .update_plugin(id, &spec)
@@ -424,11 +424,15 @@ pub async fn update_plugin(
 }
 
 /// A `wasm` plugin must reference an uploaded module by name.
-async fn ensure_wasm_module_exists(s: &AppState, spec: &PluginSpec) -> ApiResult<()> {
-    if spec.plugin_type != PluginType::Wasm {
+pub(crate) async fn ensure_wasm_module_exists(
+    s: &AppState,
+    plugin_type: PluginType,
+    config: &Value,
+) -> ApiResult<()> {
+    if plugin_type != PluginType::Wasm {
         return Ok(());
     }
-    let name = spec.config["module"].as_str().unwrap_or("");
+    let name = config["module"].as_str().unwrap_or("");
     let exists = s
         .store
         .list_wasm_modules()
@@ -468,10 +472,14 @@ fn validate_plugin(spec: &PluginSpec) -> ApiResult<()> {
         }
         _ => {}
     }
-    // Per-type config sanity (misconfigurations that would silently no-op or black-hole).
-    match spec.plugin_type {
+    validate_plugin_config(spec.plugin_type, &spec.config)
+}
+
+/// Per-type config sanity (misconfigurations that would silently no-op or black-hole).
+pub(crate) fn validate_plugin_config(plugin_type: PluginType, config: &Value) -> ApiResult<()> {
+    match plugin_type {
         PluginType::Redirect => {
-            let loc = spec.config["location"].as_str().unwrap_or("");
+            let loc = config["location"].as_str().unwrap_or("");
             if !loc.starts_with("http://") && !loc.starts_with("https://") {
                 return Err(ApiError::BadRequest(
                     "redirect needs a location starting with http:// or https://".into(),
@@ -479,7 +487,7 @@ fn validate_plugin(spec: &PluginSpec) -> ApiResult<()> {
             }
         }
         PluginType::HttpLog => {
-            let ep = spec.config["endpoint"].as_str().unwrap_or("");
+            let ep = config["endpoint"].as_str().unwrap_or("");
             if !ep.starts_with("http://") && !ep.starts_with("https://") {
                 return Err(ApiError::BadRequest(
                     "http-log needs an endpoint starting with http:// or https://".into(),
@@ -487,8 +495,8 @@ fn validate_plugin(spec: &PluginSpec) -> ApiResult<()> {
             }
         }
         PluginType::IpRestriction => {
-            let both_empty = spec.config["allow"].as_array().is_none_or(|a| a.is_empty())
-                && spec.config["deny"].as_array().is_none_or(|a| a.is_empty());
+            let both_empty = config["allow"].as_array().is_none_or(|a| a.is_empty())
+                && config["deny"].as_array().is_none_or(|a| a.is_empty());
             if both_empty {
                 return Err(ApiError::BadRequest(
                     "ip-restriction needs at least one allow or deny entry".into(),
@@ -496,28 +504,26 @@ fn validate_plugin(spec: &PluginSpec) -> ApiResult<()> {
             }
         }
         PluginType::Wasm => {
-            if spec.config["module"].as_str().unwrap_or("").is_empty() {
+            if config["module"].as_str().unwrap_or("").is_empty() {
                 return Err(ApiError::BadRequest(
                     "wasm plugin needs a module name (upload one under WASM modules)".into(),
                 ));
             }
         }
         PluginType::ProxyCache => {
-            if spec.config["ttl_secs"].as_u64().unwrap_or(60) < 1 {
+            if config["ttl_secs"].as_u64().unwrap_or(60) < 1 {
                 return Err(ApiError::BadRequest(
                     "proxy-cache needs ttl_secs >= 1".into(),
                 ));
             }
         }
         PluginType::Hsts => {
-            if spec.config["max_age_secs"].as_u64().unwrap_or(63_072_000) < 1 {
+            if config["max_age_secs"].as_u64().unwrap_or(63_072_000) < 1 {
                 return Err(ApiError::BadRequest("hsts needs max_age_secs >= 1".into()));
             }
         }
         PluginType::RequestId => {
-            let name = spec.config["header_name"]
-                .as_str()
-                .unwrap_or("X-Request-Id");
+            let name = config["header_name"].as_str().unwrap_or("X-Request-Id");
             if axum::http::header::HeaderName::from_bytes(name.as_bytes()).is_err() {
                 return Err(ApiError::BadRequest(format!(
                     "request-id header_name {name:?} is not a valid header name"
@@ -527,7 +533,7 @@ fn validate_plugin(spec: &PluginSpec) -> ApiResult<()> {
         PluginType::ResponseCompression => {
             // The level is applied to every algorithm the module may pick, so it has
             // to stay within gzip's range; 0 would mean "disabled".
-            let level = spec.config["level"].as_u64().unwrap_or(5);
+            let level = config["level"].as_u64().unwrap_or(5);
             if level < 1 || level > raahi_proxy::MAX_COMPRESSION_LEVEL as u64 {
                 return Err(ApiError::BadRequest(format!(
                     "response-compression level must be 1..={}",
@@ -536,9 +542,7 @@ fn validate_plugin(spec: &PluginSpec) -> ApiResult<()> {
             }
         }
         PluginType::ResponseBodyTransform => {
-            let empty = spec.config["replace"]
-                .as_array()
-                .is_none_or(|a| a.is_empty());
+            let empty = config["replace"].as_array().is_none_or(|a| a.is_empty());
             if empty {
                 return Err(ApiError::BadRequest(
                     "response-body-transform needs at least one replace entry".into(),
@@ -618,11 +622,35 @@ pub async fn create_credential(
     Path(consumer_id): Path<Id>,
     Json(spec): Json<CredentialSpec>,
 ) -> ApiResult<Json<ConsumerCredential>> {
-    // basic-auth secrets are hashed (bcrypt) before storage; key-auth has no secret;
-    // jwt stores its verification material as a JSON blob (needed raw to verify).
-    let stored = match spec.credential_type {
+    let stored = stored_secret(
+        spec.credential_type,
+        spec.secret.as_deref(),
+        spec.algorithm.as_deref(),
+    )?;
+    let cred = s
+        .store
+        .create_credential(
+            consumer_id,
+            spec.credential_type,
+            &spec.identifier,
+            stored.as_deref(),
+        )
+        .await?;
+    reload(&s).await?;
+    Ok(Json(cred))
+}
+
+/// The stored form of a credential secret: basic-auth secrets are hashed (bcrypt)
+/// before storage; key-auth has no secret; jwt stores its verification material
+/// as a JSON blob (needed raw to verify).
+pub(crate) fn stored_secret(
+    credential_type: CredentialType,
+    secret: Option<&str>,
+    algorithm: Option<&str>,
+) -> ApiResult<Option<String>> {
+    Ok(match credential_type {
         CredentialType::BasicAuth => {
-            let pw = spec.secret.as_deref().ok_or_else(|| {
+            let pw = secret.ok_or_else(|| {
                 ApiError::BadRequest("basic-auth credential needs a secret".into())
             })?;
             Some(
@@ -632,12 +660,12 @@ pub async fn create_credential(
         }
         CredentialType::KeyAuth => None,
         CredentialType::Jwt => {
-            let secret = spec.secret.as_deref().ok_or_else(|| {
+            let secret = secret.ok_or_else(|| {
                 ApiError::BadRequest(
                     "jwt credential needs a secret (HMAC secret or RSA public key PEM)".into(),
                 )
             })?;
-            let algorithm = spec.algorithm.as_deref().unwrap_or("HS256");
+            let algorithm = algorithm.unwrap_or("HS256");
             if !matches!(algorithm, "HS256" | "HS384" | "HS512" | "RS256") {
                 return Err(ApiError::BadRequest(
                     "jwt algorithm must be one of HS256, HS384, HS512, RS256".into(),
@@ -650,18 +678,7 @@ pub async fn create_credential(
             }
             Some(json!({ "algorithm": algorithm, "secret": secret }).to_string())
         }
-    };
-    let cred = s
-        .store
-        .create_credential(
-            consumer_id,
-            spec.credential_type,
-            &spec.identifier,
-            stored.as_deref(),
-        )
-        .await?;
-    reload(&s).await?;
-    Ok(Json(cred))
+    })
 }
 
 pub async fn delete_credential(
@@ -767,17 +784,7 @@ pub async fn create_certificate(
                 "ACME certificates must not include cert_pem or key_pem".into(),
             ));
         }
-        raahi_acme::validate_config(&spec.sni, config)
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-        let directory = raahi_acme::normalize_directory_url(&config.directory_url);
-        if directory == ZEROSSL_DIRECTORY
-            && s.store.get_acme_account(directory).await?.is_none()
-            && s.store.get_acme_eab(directory).await?.is_none()
-        {
-            return Err(ApiError::BadRequest(
-                "Configure ZeroSSL EAB credentials before requesting a certificate".into(),
-            ));
-        }
+        validate_acme_certificate(&s, &spec.sni, config).await?;
     } else {
         // Validate the PEM actually parses (cert + private key) before storing.
         raahi_proxy::validate_cert(&spec.cert_pem, &spec.key_pem).map_err(ApiError::BadRequest)?;
@@ -789,6 +796,25 @@ pub async fn create_certificate(
         s.acme_handle.trigger();
     }
     Ok(Json(c))
+}
+
+pub(crate) async fn validate_acme_certificate(
+    s: &AppState,
+    sni: &[String],
+    config: &AcmeConfig,
+) -> ApiResult<()> {
+    raahi_acme::validate_config(sni, config)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let directory = raahi_acme::normalize_directory_url(&config.directory_url);
+    if directory == ZEROSSL_DIRECTORY
+        && s.store.get_acme_account(directory).await?.is_none()
+        && s.store.get_acme_eab(directory).await?.is_none()
+    {
+        return Err(ApiError::BadRequest(
+            "Configure ZeroSSL EAB credentials before requesting a certificate".into(),
+        ));
+    }
+    Ok(())
 }
 
 pub async fn delete_certificate(

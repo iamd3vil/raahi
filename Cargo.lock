@@ -1476,6 +1476,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
+name = "huml-rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e70892f510b62c23342bd203354ee1cb1de17f42ead960372a2d9bca43b4d6a"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "hyper"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2787,6 +2796,8 @@ dependencies = [
  "raahi-discovery",
  "raahi-proxy",
  "raahi-store",
+ "reqwest",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -2857,9 +2868,11 @@ name = "raahi-core"
 version = "0.2.0"
 dependencies = [
  "chrono",
+ "huml-rs",
  "regex",
  "serde",
  "serde_json",
+ "serde_yaml",
  "url",
 ]
 

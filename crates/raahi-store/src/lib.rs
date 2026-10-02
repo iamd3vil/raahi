@@ -4,6 +4,7 @@
 mod acme_eab;
 mod applications;
 mod crud;
+mod declarative;
 mod discovery;
 mod rows;
 mod users;
@@ -18,6 +19,7 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 
+pub use declarative::{ApplyReport, ChangeAction, ConfigChange};
 pub use discovery::ReconcileResult;
 pub use users::normalize_email;
 

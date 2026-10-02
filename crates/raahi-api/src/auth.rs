@@ -188,6 +188,9 @@ pub fn required_role(method: &Method, path: &str, query: Option<&str>) -> Role {
     if p.starts_with("/discovery-sources") || p.ends_with("/discovery-sources") {
         return Role::Admin; // source configs may contain registry credentials
     }
+    if p.starts_with("/config/") {
+        return Role::Admin; // declarative apply/dump: the whole config, discovery sources included
+    }
     let is_read = matches!(*method, Method::GET | Method::HEAD);
     let admin_only = p.starts_with("/users")
         || p.starts_with("/admin/")
@@ -686,6 +689,15 @@ mod tests {
             Role::Admin
         );
         assert_eq!(required_role(&post, "/api/v1/import", None), Role::Admin);
+        assert_eq!(
+            required_role(&post, "/api/v1/config/apply", None),
+            Role::Admin
+        );
+        assert_eq!(
+            required_role(&get, "/api/v1/config/current", None),
+            Role::Admin
+        );
+        assert_eq!(required_role(&get, "/api/v1/config", None), Role::Viewer);
         assert_eq!(required_role(&get, "/api/v1/export", None), Role::Viewer);
         assert_eq!(
             required_role(&get, "/api/v1/export", Some("include_secrets=true")),

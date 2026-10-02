@@ -2,6 +2,8 @@
 //! and runs the Pingora data plane (HTTP + optional boringssl HTTPS with per-SNI
 //! certificate selection) plus the admin API and health checks as background services.
 
+mod cli;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -61,6 +63,10 @@ struct Cli {
     /// Pingora's own default is 1, which caps throughput at one core.
     #[arg(long, env = "RAAHI_THREADS")]
     threads: Option<usize>,
+
+    /// Without a subcommand, Raahi runs the proxy server.
+    #[command(subcommand)]
+    command: Option<cli::Command>,
 }
 
 fn map_pingora<E: std::fmt::Display>(e: E) -> anyhow::Error {
@@ -128,6 +134,9 @@ fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
+    if let Some(command) = cli.command {
+        return cli::run(command);
+    }
 
     // One-shot async setup on a current-thread runtime, dropped before the server runs.
     let setup_rt = tokio::runtime::Builder::new_current_thread()

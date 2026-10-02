@@ -301,7 +301,7 @@ pub struct StreamRoute {
 }
 
 /// One entry of a [`Route`]'s weighted traffic split.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RouteSplit {
     pub service_id: Id,
     pub weight: u32,

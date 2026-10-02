@@ -5,6 +5,7 @@
 mod acme_accounts;
 mod applications;
 mod auth;
+mod declarative;
 mod error;
 mod handlers;
 mod openapi;
@@ -200,6 +201,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/requests", get(requests))
         .route("/events", get(events))
         .route("/config", get(config_summary))
+        .route("/config/apply", axum::routing::post(declarative::apply))
+        .route("/config/current", get(declarative::current))
         .route("/health", get(target_health))
         .route("/router/test", get(router_test))
         .route("/export", get(export_config))
