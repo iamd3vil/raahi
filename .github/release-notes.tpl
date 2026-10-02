@@ -1,17 +1,22 @@
 # Raahi {{ meta.tag }}
 
-Adds service discovery.
+Adds config files. You can keep Raahi's configuration in a YAML, HUML, or JSON file, review it like code, and apply it to a running instance.
 
 ## What's new
 
-- Service discovery: a service's targets can now come from DNS (A/AAAA), DNS SRV records, or an HTTP registry. Raahi polls each source, adds new endpoints, and retires stale ones after a configurable grace period.
-- Operator-created and discovered targets can coexist in the same service.
-- Discovery sources are managed through the REST API and the admin UI. Reading or changing them requires the admin role.
-- Targets now carry a priority.
+- `raahi apply -f raahi.yaml` applies a config file through the management API. The file refers to services, routes, consumers, and certificates by name. Plugins sit under the service or route they apply to.
+- Apply changes only what differs, in one transaction. Anything that matches by name keeps its ID, discovered targets, health state, and issued certificate.
+- `--dry-run` prints the planned creates, updates, and deletes without changing anything.
+- Raahi leaves a top-level section alone if the file doesn't have it, so a file can manage just services and routes while consumers stay in the UI.
+- `raahi apply` fills `${VAR}` references from the local environment before sending the file. Secrets stay out of the file, and the server never expands variables.
+- `raahi dump` prints the running configuration as a file. It leaves out secrets, and applying it unchanged changes nothing.
+- Two admin-only endpoints back the commands: `POST /api/v1/config/apply` and `GET /api/v1/config/current`.
+
+The [config files guide](https://raahi.sarat.dev/guides/config-files/) covers the format.
 
 ## Upgrading
 
-Raahi applies migration `0011_service_discovery.sql` on first start. It only adds tables and columns, but back up your database before upgrading, since Raahi does not roll migrations back.
+This release has no database migrations. `raahi` without a subcommand still starts the server, so existing service files and container commands keep working. `/api/v1/export` and `/api/v1/import` are unchanged.
 
 ## Included
 
@@ -21,6 +26,7 @@ Raahi applies migration `0011_service_discovery.sql` on first start. It only add
 - SNI certificate selection and ACME certificate management
 - Route matching, load balancing, health checks, traffic splitting, and policy plugins
 - Service discovery from DNS, SRV, and HTTP registries
+- Config files in YAML, HUML, or JSON with `raahi apply` and `raahi dump`
 - Admin UI, REST API, Prometheus metrics, and JSON backup and restore
 
 ## Install

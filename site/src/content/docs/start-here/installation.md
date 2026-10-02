@@ -37,9 +37,9 @@ GitHub Releases publishes Linux archives for amd64 and arm64. The archive contai
 
 ```bash
 # Replace amd64 with arm64 when needed.
-archive=raahi-v0.2.0-linux-amd64.tar.gz
-curl -LO "https://github.com/iamd3vil/raahi/releases/download/v0.2.0/$archive"
-curl -LO https://github.com/iamd3vil/raahi/releases/download/v0.2.0/checksums.txt
+archive=raahi-v0.3.0-linux-amd64.tar.gz
+curl -LO "https://github.com/iamd3vil/raahi/releases/download/v0.3.0/$archive"
+curl -LO https://github.com/iamd3vil/raahi/releases/download/v0.3.0/checksums.txt
 checksum_line="$(grep -F "$archive" checksums.txt)"
 expected="${checksum_line#*$'\t'}"
 echo "$expected  $archive" | sha256sum -c -
@@ -56,7 +56,7 @@ docker run --rm \
   -p 8443:8443 \
   -p 127.0.0.1:9080:9080 \
   -v raahi-data:/data \
-  ghcr.io/iamd3vil/raahi:0.2.0
+  ghcr.io/iamd3vil/raahi:0.3.0
 ```
 
 The image stores the SQLite database in `/data`. It serves the bundled UI and binds the admin listener inside the container.
