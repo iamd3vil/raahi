@@ -27,6 +27,7 @@ A running instance publishes:
 | Certificates and ACME | Serve HTTPS and renew certificates |
 | Users, SSO, and admin token | Protect management access |
 | Metrics, health, and requests | Inspect live traffic and target state |
+| Config files | Apply a YAML, HUML, or JSON config file, or dump the current state as one |
 | Export and import | Back up or replace configuration |
 
 ## Response rules

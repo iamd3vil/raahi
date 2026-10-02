@@ -138,7 +138,7 @@ their documented defaults.
 ## Config files
 
 You can keep the gateway configuration in a YAML, HUML, or JSON file and apply it through the
-API. The file uses names instead of IDs: routes name their service, and plugins sit under the
+API. The file uses names instead of IDs. Routes name their service, and plugins sit under the
 service or route they apply to.
 
 ```yaml
@@ -174,8 +174,11 @@ certificates:
     acme_config: { challenge: dns-01, email: ops@example.com }
 ```
 
-Apply it with the `raahi` binary. It reads `RAAHI_URL` (default `http://127.0.0.1:9080`) and
-`RAAHI_TOKEN`:
+Quote wildcard hosts such as `"*.example.com"`. A bare `*` starts a YAML alias and the file
+fails to parse.
+
+Apply it with the `raahi` binary. It reads the admin URL from `RAAHI_URL`, which defaults to
+`http://127.0.0.1:9080`, and the admin token from `RAAHI_TOKEN`.
 
 ```bash
 raahi apply -f raahi.yaml --dry-run   # print the plan, change nothing
@@ -183,30 +186,30 @@ raahi apply -f raahi.yaml
 raahi dump --format huml > raahi.huml # current state as a starting file
 ```
 
-How apply works:
+Apply compares the file with the database and changes only what differs, in one transaction.
 
-- Entities are matched by name: targets by host and port, and plugins by type and position
-  among the same owner's plugins of that type. Apply creates what is new, updates what changed,
-  and deletes what is gone, all in one transaction. Unchanged entities keep their IDs,
-  discovered targets, health state, and issued certificates.
-- A top-level section missing from the file (`routes`, `consumers`, and so on) is left alone.
-  A section that is present, even as `[]`, is fully managed, so entries made in the UI that
-  are not in the file are deleted on the next apply. Use `--dry-run` to check first.
+- Services, routes, stream routes, consumers, and certificates match by name. Targets match by
+  host and port. Plugins match by type and position among the plugins of the same owner.
+  Anything that matches keeps its ID, discovered targets, health state, and issued certificate.
+- Raahi leaves a top-level section alone if the file doesn't have it. If the file has the
+  section, even as `[]`, Raahi deletes every entry in it that the file doesn't list. That
+  includes entries someone added through the UI, so run `--dry-run` first.
 - Apply refuses to delete a service that a route outside the file still uses.
-- `raahi apply` replaces `${NAME}` in string values with environment variables on the machine
-  running the command, before sending the file. An unset variable is an error. Write `$${` for
-  a literal `${`. The server never expands variables.
-- An omitted credential `secret` or certificate `cert_pem`/`key_pem` keeps the stored value,
-  so a dump re-applies as a no-op. New basic-auth and jwt credentials need a secret.
-- Settings, WASM modules, ACME accounts and EAB credentials, the Cloudflare token, and users
-  are not part of the file. Manage them through the API or UI. `/export` and `/import` remain
-  the way to take and restore full backups.
+- `raahi apply` replaces `${NAME}` in string values with environment variables from the machine
+  that runs it, then sends the file. An unset variable stops the apply. Write `$${` for a
+  literal `${`. The server never expands variables.
+- If the file leaves out a credential `secret` or a certificate's `cert_pem` and `key_pem`,
+  Raahi keeps the stored values. That is why a dump re-applies as a no-op. New basic-auth and
+  jwt credentials need a secret.
+- The file doesn't cover settings, WASM modules, ACME accounts and EAB credentials, the
+  Cloudflare token, or users. Manage those through the API or UI. Use `/export` and `/import`
+  for full backups.
 
-Without the CLI, `POST /api/v1/config/apply` accepts the file directly with
-`Content-Type: application/yaml`, `application/huml`, or `application/json`, plus an optional
+The CLI isn't required. `POST /api/v1/config/apply` takes the file directly with
+`Content-Type: application/yaml`, `application/huml`, or `application/json`, and accepts
 `?dry_run=true`. `GET /api/v1/config/current?format=yaml|huml|json` returns the dump. Both need
-the admin role. The dump contains key-auth API keys, plugin configs, and discovery configs, so
-handle it as sensitive.
+the admin role. Treat a dump as sensitive. It contains key-auth API keys, plugin configs, and
+discovery configs.
 
 ## Operational details
 

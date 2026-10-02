@@ -1211,13 +1211,15 @@ paths:
       tags: [Configuration]
       summary: Apply a declarative config file
       description: >-
-        Reconciles the configuration against a name-keyed config file (JSON, YAML or
-        HUML, chosen by Content-Type) in one transaction. Entities are matched by name,
-        so unchanged ones keep their IDs, discovered targets, health state and issued
-        certificates. Top-level sections missing from the file are left untouched; a
-        present section (even empty) is fully managed. Omitted credential secrets and
-        certificate PEMs keep the stored ones. `raahi apply` wraps this endpoint and fills
-        `${VAR}` references from the client environment first. Admin only.
+        Changes the configuration to match a config file, in one transaction. The
+        Content-Type selects JSON, YAML, or HUML. Raahi matches entities by name, so
+        unchanged ones keep their IDs, discovered targets, health state, and issued
+        certificates. Raahi leaves a top-level section alone if the file doesn't have it,
+        and deletes unlisted entries from a section the file does have, even an empty
+        one. An omitted credential secret or certificate PEM keeps the stored value.
+        `raahi apply` calls this endpoint after filling `${VAR}` references from the
+        client environment. The server itself treats `${VAR}` as literal text.
+        Admin only.
       operationId: applyConfigFile
       parameters:
         - name: dry_run
@@ -1243,9 +1245,10 @@ paths:
       tags: [Configuration]
       summary: Dump the current configuration as a config file
       description: >-
-        Every section is present. Credential secrets and certificate PEMs are omitted;
-        key-auth identifiers (the API keys themselves), plugin configs and discovery
-        configs are included. Applying the dump unchanged is a no-op. Admin only.
+        The dump has every section. It leaves out credential secrets and certificate
+        PEMs but contains key-auth identifiers, which are the API keys themselves, plus
+        plugin and discovery configs. Applying the dump unchanged changes nothing.
+        Admin only.
       operationId: currentConfigFile
       parameters:
         - name: format
@@ -2226,7 +2229,7 @@ components:
             type: object
             additionalProperties: false
             required: [name]
-            description: Either acme_config, or cert_pem and key_pem. Omitted PEMs keep the stored ones.
+            description: Set acme_config for ACME, or cert_pem and key_pem for an uploaded certificate. If both PEMs are left out, an existing certificate keeps its stored ones.
             properties:
               name: {type: string}
               sni: {type: array, items: {type: string}}
@@ -2250,7 +2253,7 @@ components:
         health_path: {type: string}
         targets:
           type: array
-          description: Manual targets, matched by host and port.
+          description: Manual targets. Apply matches them by host and port.
           items:
             type: object
             additionalProperties: false
@@ -2310,7 +2313,7 @@ components:
       type: object
       additionalProperties: false
       required: [type]
-      description: Matched by type and position among same-type plugins of the same owner.
+      description: Apply matches plugins by type and position among the plugins of the same owner.
       properties:
         type: {type: string, example: key-auth}
         config: {type: object, additionalProperties: true}
@@ -2330,7 +2333,7 @@ components:
               action: {type: string, enum: [create, update, delete]}
               kind: {type: string, enum: [service, target, discovery_source, route, stream_route, plugin, consumer, credential, certificate]}
               name: {type: string, example: key-auth on route billing}
-        note: {type: string, description: Present when stream routes changed; listener changes take effect on restart.}
+        note: {type: string, description: Set when stream routes changed. Listener changes take effect on restart.}
     ImportReport:
       type: object
       required: [services, targets, discovery_sources, routes, stream_routes, plugins, consumers, credentials, certificates, wasm_modules, skipped]

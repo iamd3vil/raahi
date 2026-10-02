@@ -184,7 +184,9 @@ curl -X POST http://127.0.0.1:9080/api/v1/services \
   -d '{"name":"orders","protocol":"http"}'
 ```
 
-PUT replaces the complete resource rather than applying a partial update. To keep configuration in git instead, write a config file and apply it with `raahi apply`. See [Config files](docs/API.md#config-files). See the [API guide](https://raahi.sarat.dev/api/overview/) and [interactive reference](https://raahi.sarat.dev/api-reference/).
+PUT replaces the complete resource rather than applying a partial update. See the [API guide](https://raahi.sarat.dev/api/overview/) and [interactive reference](https://raahi.sarat.dev/api-reference/).
+
+To keep configuration in git, write it as a YAML or HUML file and apply it with `raahi apply`. The [config files guide](https://raahi.sarat.dev/guides/config-files/) covers the format.
 
 ## Development
 
