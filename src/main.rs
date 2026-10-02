@@ -81,6 +81,9 @@ async fn seed(store: &Store) -> anyhow::Result<()> {
     }
     let svc = store
         .create_service(&ServiceSpec {
+            kind: Default::default(),
+            root: None,
+            spa_fallback: false,
             upstream_authority: None,
             name: "demo-service".into(),
             protocol: raahi_core::Protocol::Http,

@@ -271,6 +271,9 @@ mod tests {
     fn service_runtime(backends: Vec<BackendRt>) -> ServiceRuntime {
         ServiceRuntime {
             service: Service {
+                kind: Default::default(),
+                root: None,
+                spa_fallback: false,
                 id: 1,
                 name: "test".into(),
                 protocol: raahi_core::Protocol::Http,

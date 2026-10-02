@@ -7,6 +7,7 @@ mod crud;
 mod declarative;
 mod discovery;
 mod rows;
+mod static_roots;
 mod users;
 
 use std::collections::HashMap;
@@ -14,7 +15,9 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use raahi_core::{CredentialType, ImportDoc, JwtCred, ProxyConfig, RouteSplit, Target};
+use raahi_core::{
+    CredentialType, ImportDoc, JwtCred, ProxyConfig, RouteSplit, ServiceSpec, Target,
+};
 use serde::Serialize;
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
@@ -44,6 +47,8 @@ pub enum StoreError {
 pub struct Store {
     pool: SqlitePool,
     version: std::sync::Arc<AtomicU64>,
+    /// Resolved directory containing the live SQLite database, if file-backed.
+    database_dir: Option<std::sync::Arc<std::path::PathBuf>>,
 }
 
 /// What an import did — counts of restored entities plus anything skipped and why.
@@ -81,9 +86,29 @@ impl Store {
 
         MIGRATOR.run(&pool).await?;
 
+        // SQLite reports an empty filename for all in-memory URL forms. Ask the
+        // live connection instead of interpreting SQLx's synthetic filenames.
+        let filename: String =
+            sqlx::query_scalar("SELECT file FROM pragma_database_list WHERE name='main'")
+                .fetch_one(&pool)
+                .await?;
+        let database_dir = if filename.is_empty() {
+            None
+        } else {
+            Some(
+                tokio::fs::canonicalize(filename)
+                    .await
+                    .map_err(|e| StoreError::Invalid(format!("cannot resolve database path: {e}")))?
+                    .parent()
+                    .expect("database file has a parent")
+                    .to_path_buf(),
+            )
+        };
+
         let store = Store {
             pool,
             version: std::sync::Arc::new(AtomicU64::new(0)),
+            database_dir: database_dir.map(std::sync::Arc::new),
         };
         store.ensure_settings().await?;
         Ok(store)
@@ -125,6 +150,25 @@ impl Store {
         }
 
         let mut report = ImportReport::default();
+        for imported in &doc.services {
+            let s = &imported.service;
+            self.validate_service(&ServiceSpec {
+                name: s.name.clone(),
+                kind: s.kind,
+                root: s.root.clone(),
+                spa_fallback: s.spa_fallback,
+                protocol: s.protocol,
+                connect_timeout_ms: s.connect_timeout_ms,
+                read_timeout_ms: s.read_timeout_ms,
+                write_timeout_ms: s.write_timeout_ms,
+                retries: s.retries,
+                lb_algorithm: s.lb_algorithm,
+                upstream_authority: s.upstream_authority.clone(),
+                tls_sni: s.tls_sni.clone(),
+                health_path: s.health_path.clone(),
+            })
+            .await?;
+        }
         let mut tx = self.pool.begin().await?;
 
         for table in [
@@ -152,8 +196,8 @@ impl Store {
             let s = &is.service;
             let res = sqlx::query(
                 "INSERT INTO services (name, protocol, connect_timeout_ms, read_timeout_ms, \
-                 write_timeout_ms, retries, lb_algorithm, upstream_authority, tls_sni, health_path, created_at, updated_at) \
-                 VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))",
+                 write_timeout_ms, retries, lb_algorithm, upstream_authority, tls_sni, health_path, kind, root, spa_fallback, created_at, updated_at) \
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))",
             )
             .bind(&s.name)
             .bind(s.protocol.as_str())
@@ -165,6 +209,9 @@ impl Store {
             .bind(&s.upstream_authority)
             .bind(&s.tls_sni)
             .bind(&s.health_path)
+            .bind(s.kind.as_str())
+            .bind(&s.root)
+            .bind(s.spa_fallback)
             .execute(&mut *tx)
             .await?;
             let new_id = res.last_insert_rowid();

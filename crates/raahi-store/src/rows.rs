@@ -24,6 +24,12 @@ pub fn map_service(r: &SqliteRow) -> Service {
     Service {
         id: r.get("id"),
         name: r.get("name"),
+        kind: match r.get::<String, _>("kind").as_str() {
+            "static" => ServiceKind::Static,
+            _ => ServiceKind::Proxy,
+        },
+        root: r.get("root"),
+        spa_fallback: r.get::<i64, _>("spa_fallback") != 0,
         protocol: Protocol::from_str(&r.get::<String, _>("protocol")).unwrap_or(Protocol::Http),
         connect_timeout_ms: r.get::<i64, _>("connect_timeout_ms") as u64,
         read_timeout_ms: r.get::<i64, _>("read_timeout_ms") as u64,

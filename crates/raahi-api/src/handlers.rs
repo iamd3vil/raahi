@@ -3,9 +3,9 @@
 
 use std::convert::Infallible;
 
-use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::{Extension, Json};
 use chrono::Utc;
 use raahi_core::*;
 use serde::Deserialize;
@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
 
+use crate::auth::Principal;
 use crate::error::{ApiError, ApiResult};
 use crate::{AppState, reload, reload_certs};
 
@@ -40,8 +41,10 @@ pub async fn get_service(
 
 pub async fn create_service(
     State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
     Json(spec): Json<ServiceSpec>,
 ) -> ApiResult<Json<Service>> {
+    authorize_service_write(&p, &spec, None)?;
     let svc = s.store.create_service(&spec).await?;
     reload(&s).await?;
     Ok(Json(svc))
@@ -50,8 +53,11 @@ pub async fn create_service(
 pub async fn update_service(
     State(s): State<AppState>,
     Path(id): Path<Id>,
+    Extension(p): Extension<Principal>,
     Json(spec): Json<ServiceSpec>,
 ) -> ApiResult<Json<Service>> {
+    let current = s.store.get_service(id).await?.ok_or(ApiError::NotFound)?;
+    authorize_service_write(&p, &spec, Some(&current))?;
     let svc = s
         .store
         .update_service(id, &spec)
@@ -64,12 +70,96 @@ pub async fn update_service(
 pub async fn delete_service(
     State(s): State<AppState>,
     Path(id): Path<Id>,
+    Extension(p): Extension<Principal>,
 ) -> ApiResult<Json<Value>> {
+    let current = s.store.get_service(id).await?.ok_or(ApiError::NotFound)?;
+    if current.kind == ServiceKind::Static && p.role < Role::Admin {
+        return Err(ApiError::Forbidden(
+            "static services require the admin role".into(),
+        ));
+    }
     if !s.store.delete_service(id).await? {
         return Err(ApiError::NotFound);
     }
     reload(&s).await?;
     Ok(Json(json!({ "deleted": true })))
+}
+
+/// A static root grants read access to host files, so it is an admin capability.
+/// Check both the submitted and stored service to cover type conversions too.
+fn authorize_service_write(
+    p: &Principal,
+    spec: &ServiceSpec,
+    current: Option<&Service>,
+) -> ApiResult<()> {
+    if p.role < Role::Admin
+        && (spec.kind == ServiceKind::Static
+            || spec.root.is_some()
+            || spec.spa_fallback
+            || current.is_some_and(|s| s.kind == ServiceKind::Static || s.root.is_some()))
+    {
+        return Err(ApiError::Forbidden(
+            "static services require the admin role".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod static_authorization_tests {
+    use super::*;
+    use crate::auth::AuthMethod;
+
+    #[test]
+    fn static_service_writes_require_admin_for_submitted_and_stored_state() {
+        let proxy: ServiceSpec = serde_json::from_value(json!({"name": "site"})).unwrap();
+        let static_site = ServiceSpec {
+            kind: ServiceKind::Static,
+            root: Some("/srv/www/site".into()),
+            ..proxy.clone()
+        };
+        let current: Service = serde_json::from_value(json!({
+            "id": 1, "name": "site", "kind": "static", "root": "/srv/www/site",
+            "spa_fallback": false, "protocol": "http", "connect_timeout_ms": 5000,
+            "read_timeout_ms": 30000, "write_timeout_ms": 30000, "retries": 1,
+            "lb_algorithm": "round_robin", "created_at": Utc::now(), "updated_at": Utc::now()
+        }))
+        .unwrap();
+        for role in [Role::Editor, Role::Admin] {
+            let principal = Principal {
+                role,
+                method: AuthMethod::Session,
+                user: None,
+            };
+            assert!(authorize_service_write(&principal, &proxy, None).is_ok());
+            for (spec, stored) in [
+                (static_site.clone(), None),
+                (static_site.clone(), Some(&current)),
+                (proxy.clone(), Some(&current)),
+                (
+                    ServiceSpec {
+                        root: static_site.root.clone(),
+                        ..proxy.clone()
+                    },
+                    None,
+                ),
+                (
+                    ServiceSpec {
+                        spa_fallback: true,
+                        ..proxy.clone()
+                    },
+                    None,
+                ),
+            ] {
+                let result = authorize_service_write(&principal, &spec, stored);
+                if role == Role::Admin {
+                    assert!(result.is_ok());
+                } else {
+                    assert!(matches!(result, Err(ApiError::Forbidden(_))));
+                }
+            }
+        }
+    }
 }
 
 // ---- targets -----------------------------------------------------------------

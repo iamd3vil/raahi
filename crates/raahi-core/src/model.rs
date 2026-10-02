@@ -95,11 +95,35 @@ impl std::str::FromStr for LbAlgorithm {
     }
 }
 
-/// A logical upstream: a named group of [`Target`]s sharing connection settings.
+/// How a service handles requests. Existing services default to proxying.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ServiceKind {
+    #[default]
+    Proxy,
+    Static,
+}
+
+impl ServiceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Proxy => "proxy",
+            Self::Static => "static",
+        }
+    }
+}
+
+/// A named upstream group or a local static site.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Service {
     pub id: Id,
     pub name: String,
+    #[serde(default)]
+    pub kind: ServiceKind,
+    #[serde(default)]
+    pub root: Option<String>,
+    #[serde(default)]
+    pub spa_fallback: bool,
     pub protocol: Protocol,
     pub connect_timeout_ms: u64,
     pub read_timeout_ms: u64,

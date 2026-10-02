@@ -8,6 +8,7 @@ mod metrics;
 mod plugins;
 mod proxy;
 mod runtime;
+mod static_files;
 mod stream;
 mod tls;
 

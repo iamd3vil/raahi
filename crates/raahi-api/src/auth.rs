@@ -10,6 +10,8 @@
 //! Authorization is by HTTP method plus a short admin-only path list: GET needs
 //! `viewer`, mutations need `editor`, and user/SSO/token/listener/import management
 //! needs `admin`.
+//! Service handlers additionally require `admin` for writes involving static
+//! services, because choosing a root grants read access to host files.
 
 use std::collections::HashMap;
 use std::sync::Arc;

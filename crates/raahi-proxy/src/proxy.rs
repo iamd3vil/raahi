@@ -13,7 +13,8 @@ use pingora::modules::http::HttpModules;
 use pingora::modules::http::compression::{ResponseCompression, ResponseCompressionBuilder};
 use pingora::prelude::*;
 use pingora::{Error, ErrorType};
-use raahi_core::{Id, strip_prefix};
+use raahi_core::{Id, Service, ServiceKind, strip_prefix};
+use tokio::io::AsyncReadExt;
 
 use crate::httplog::{LogEvent, LogSender};
 use crate::metrics::{Metrics, RequestRecord};
@@ -113,6 +114,123 @@ async fn send_response(session: &mut Session, r: &ShortResp) -> Result<()> {
     Ok(())
 }
 
+impl RaahiProxy {
+    async fn serve_static(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        service: &Service,
+    ) -> Result<()> {
+        let req = session.req_header();
+        let path = if ctx.strip_path {
+            let path = strip_prefix(&ctx.matched_prefix, req.uri.path());
+            if path == "/" && !req.uri.path().ends_with('/') {
+                // Redirect a mount root such as /docs to /docs/ so relative
+                // asset URLs resolve under the mount instead of at the origin.
+                String::new()
+            } else {
+                path
+            }
+        } else {
+            req.uri.path().to_string()
+        };
+        let mut headers = req.headers.clone();
+        for name in &ctx.req_remove {
+            headers.remove(name.as_str());
+        }
+        for (name, value) in &ctx.req_add {
+            if let (Ok(name), Ok(value)) = (name.parse::<http::header::HeaderName>(), value.parse())
+            {
+                headers.insert(name, value);
+            }
+        }
+        if ctx.body_transform.is_some() {
+            // File validators and byte offsets describe the original bytes, not
+            // a transformed representation. Serve the complete transformed body.
+            for name in ["range", "if-range", "if-none-match", "if-modified-since"] {
+                headers.remove(name);
+            }
+        }
+        let mut file_response =
+            crate::static_files::respond(service, req.method.clone(), path, headers).await;
+        let mut response = ResponseHeader::build(file_response.status.as_u16(), None)?;
+        for (name, value) in &file_response.headers {
+            response.append_header(name.clone(), value)?;
+        }
+        if file_response.status.is_redirection() && file_response.headers.contains_key("location") {
+            // Preserve the external mount prefix and query string. A path starting
+            // with // must not become a protocol-relative redirect to another host.
+            let uri = &session.req_header().uri;
+            let path = format!("/{}/", uri.path().trim_matches('/'));
+            let location = match uri.query() {
+                Some(query) => format!("{path}?{query}"),
+                None => path,
+            };
+            response.insert_header("location", location)?;
+        }
+        let no_body =
+            ctx.method == "HEAD" || file_response.status == http::StatusCode::NOT_MODIFIED;
+        if no_body || file_response.status == http::StatusCode::PARTIAL_CONTENT {
+            // Never transform/cache HEAD or partial representations. Compressing
+            // byte ranges would make Content-Range describe the wrong bytes.
+            ctx.body_transform = None;
+            ctx.cache_store = None;
+            if let Some(compression) = session
+                .downstream_modules_ctx
+                .get_mut::<ResponseCompression>()
+            {
+                compression.adjust_level(0);
+            }
+        }
+        if ctx.body_transform.is_some() {
+            // A transformed representation no longer has the file's validators.
+            response.remove_header("etag");
+            response.remove_header("last-modified");
+        }
+        self.response_filter(session, &mut response, ctx).await?;
+        if !no_body
+            && !response.headers.contains_key("content-length")
+            && !response.headers.contains_key("transfer-encoding")
+        {
+            response.insert_header("content-length", file_response.remaining.to_string())?;
+        }
+        session
+            .write_response_header(Box::new(response), no_body)
+            .await?;
+        if no_body {
+            return Ok(());
+        }
+        if let Some(file) = &mut file_response.file {
+            let mut buffer = vec![0; 64 * 1024];
+            while file_response.remaining > 0 {
+                let limit = file_response.remaining.min(buffer.len() as u64) as usize;
+                let read = file.read(&mut buffer[..limit]).await.map_err(|error| {
+                    Error::explain(
+                        ErrorType::InternalError,
+                        format!("static file read: {error}"),
+                    )
+                })?;
+                if read == 0 {
+                    return Err(Error::explain(
+                        ErrorType::InternalError,
+                        "static file truncated during response",
+                    ));
+                }
+                file_response.remaining -= read as u64;
+                let end = file_response.remaining == 0;
+                let mut body = Some(Bytes::copy_from_slice(&buffer[..read]));
+                self.response_body_filter(session, &mut body, end, ctx)?;
+                session.write_response_body(body, end).await?;
+            }
+        } else {
+            let mut body = None;
+            self.response_body_filter(session, &mut body, true, ctx)?;
+            session.write_response_body(body, true).await?;
+        }
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl ProxyHttp for RaahiProxy {
     type CTX = Ctx;
@@ -141,6 +259,7 @@ impl ProxyHttp for RaahiProxy {
             NoRoute,
             NoBackend,
             Short(ShortResp),
+            Static(Service),
             Proceed,
         }
 
@@ -210,7 +329,7 @@ impl ProxyHttp for RaahiProxy {
             let has_backend = rc
                 .services
                 .get(&service_id)
-                .map(|sr| !sr.backends.is_empty())
+                .map(|sr| sr.service.kind == ServiceKind::Static || !sr.backends.is_empty())
                 .unwrap_or(false);
             if !has_backend {
                 break 'matched (Verdict::NoBackend, None);
@@ -255,7 +374,15 @@ impl ProxyHttp for RaahiProxy {
             ctx.body_transform = effects.body_transform;
             match short {
                 Some(r) => (Verdict::Short(r), effects.compression_level),
-                None => (Verdict::Proceed, effects.compression_level),
+                None => {
+                    let service = &rc.services[&service_id].service;
+                    let verdict = if service.kind == ServiceKind::Static {
+                        Verdict::Static(service.clone())
+                    } else {
+                        Verdict::Proceed
+                    };
+                    (verdict, effects.compression_level)
+                }
             }
         };
 
@@ -275,7 +402,7 @@ impl ProxyHttp for RaahiProxy {
                     .await?;
                 return Ok(true);
             }
-            Verdict::Short(_) | Verdict::Proceed => {}
+            Verdict::Short(_) | Verdict::Static(_) | Verdict::Proceed => {}
         }
 
         // response-compression: hand the plugin's decision to Pingora's downstream
@@ -293,6 +420,10 @@ impl ProxyHttp for RaahiProxy {
             }
         }
 
+        if let Verdict::Static(service) = &verdict {
+            self.serve_static(session, ctx, service).await?;
+            return Ok(true);
+        }
         if let Verdict::Short(mut r) = verdict {
             // Response-header effects staged by plugins that ran before the
             // short-circuit still apply (correlation ids, CORS headers on errors).

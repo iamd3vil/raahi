@@ -121,6 +121,12 @@ pub struct ConfigDoc {
 #[serde(deny_unknown_fields)]
 pub struct ConfigService {
     pub name: String,
+    #[serde(default)]
+    pub kind: ServiceKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub spa_fallback: bool,
     #[serde(default = "d_http")]
     pub protocol: Protocol,
     #[serde(default = "d_connect")]
@@ -152,6 +158,9 @@ impl ConfigService {
     pub fn spec(&self) -> ServiceSpec {
         ServiceSpec {
             name: self.name.clone(),
+            kind: self.kind,
+            root: self.root.clone(),
+            spa_fallback: self.spa_fallback,
             protocol: self.protocol,
             connect_timeout_ms: self.connect_timeout_ms,
             read_timeout_ms: self.read_timeout_ms,

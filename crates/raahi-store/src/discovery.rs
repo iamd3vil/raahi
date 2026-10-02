@@ -54,8 +54,14 @@ impl Store {
         service_id: Id,
         source: &DiscoverySourceSpec,
     ) -> Result<DiscoverySource, StoreError> {
-        if self.get_service(service_id).await?.is_none() {
-            return Err(StoreError::NotFound);
+        let service = self
+            .get_service(service_id)
+            .await?
+            .ok_or(StoreError::NotFound)?;
+        if service.kind == raahi_core::ServiceKind::Static {
+            return Err(StoreError::Invalid(
+                "static services cannot have discovery sources".into(),
+            ));
         }
         let mut tx = self.pool.begin().await?;
         let id = insert_discovery_source(&mut tx, service_id, source).await?;

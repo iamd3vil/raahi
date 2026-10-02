@@ -11,11 +11,12 @@
     LbAlgorithm,
     Protocol,
     Service,
+    ServiceKind,
     Target,
     TargetHealth,
   } from '../lib/types';
   import { DISCOVERY_PROVIDERS, DISCOVERY_PROVIDER_LABELS } from '../lib/types';
-  import { toast } from '../lib/state.svelte';
+  import { hasRole, toast } from '../lib/state.svelte';
   import Drawer from '../lib/components/Drawer.svelte';
   import EmptyState from '../lib/components/EmptyState.svelte';
 
@@ -45,6 +46,9 @@
 
   let form = $state({
     name: '',
+    kind: 'proxy' as ServiceKind,
+    root: '',
+    spa_fallback: false,
     protocol: 'http' as Protocol,
     lb_algorithm: 'round_robin' as LbAlgorithm,
     connect_timeout_ms: 5000,
@@ -116,6 +120,9 @@
     srcOpen = false;
     form = {
       name: '',
+      kind: 'proxy',
+      root: '',
+      spa_fallback: false,
       protocol: 'http',
       lb_algorithm: 'round_robin',
       connect_timeout_ms: 5000,
@@ -134,6 +141,9 @@
     srcOpen = false;
     form = {
       name: s.name,
+      kind: s.kind ?? 'proxy',
+      root: s.root ?? '',
+      spa_fallback: s.spa_fallback ?? false,
       protocol: s.protocol,
       lb_algorithm: s.lb_algorithm,
       connect_timeout_ms: s.connect_timeout_ms,
@@ -149,8 +159,13 @@
   }
 
   async function save() {
+    if (form.kind === 'static' && !form.root.trim().startsWith('/')) {
+      return toast('Static sites need an absolute directory path on the Raahi host', 'err');
+    }
     const payload = {
       ...form,
+      root: form.kind === 'static' ? form.root.trim() : null,
+      spa_fallback: form.kind === 'static' && form.spa_fallback,
       tls_sni: form.tls_sni || null,
       upstream_authority: form.upstream_authority.trim() || null,
       health_path: form.health_path.trim() || null,
@@ -163,7 +178,7 @@
       } else {
         const s = await api.createService(payload);
         editing = s; // keep drawer open to add targets
-        toast('Service created — add targets below', 'ok');
+        toast(s.kind === 'static' ? 'Static service created. Add a route to publish it.' : 'Service created. Add targets below.', 'ok');
       }
       await load();
     } catch (e) {
@@ -449,7 +464,7 @@
 </script>
 
 <div class="head-actions">
-  <p class="muted">Upstreams: named groups of backend targets with load balancing.</p>
+  <p class="muted">Services proxy to upstream targets or serve a local static directory.</p>
   <button onclick={openNew}>+ New service</button>
 </div>
 
@@ -460,7 +475,7 @@
     <EmptyState
       icon="M5 4h14a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm0 10h14a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1z"
       title="No services yet"
-      description="A service groups one or more upstream targets behind a load-balancing policy. Routes send traffic to services."
+      description="Create an upstream group or a static site, then attach a route to send traffic to it."
     >
       {#snippet action()}
         <button onclick={openNew}>+ Create your first service</button>
@@ -470,7 +485,7 @@
     <div class="table">
       <table>
         <thead>
-          <tr><th>Name</th><th>Protocol</th><th>Balancing</th><th>Targets</th><th></th></tr>
+          <tr><th>Name</th><th>Type</th><th>Balancing</th><th>Directory / targets</th><th></th></tr>
         </thead>
         <tbody>
           {#each services as s (s.id)}
@@ -478,10 +493,13 @@
             {@const srcs = sourcesBy[s.id] ?? []}
             <tr>
               <td><strong>{s.name}</strong></td>
-              <td><span class="badge {s.protocol === 'https' ? '' : 'outline'}">{s.protocol}</span></td>
-              <td class="mono">{s.lb_algorithm}</td>
+              <td><span class="badge {s.kind === 'static' || s.protocol === 'https' ? '' : 'outline'}">{s.kind === 'static' ? 'static' : s.protocol}</span></td>
+              <td class="mono">{s.kind === 'static' ? '—' : s.lb_algorithm}</td>
               <td>
-                {#if ts.length === 0 && srcs.length === 0}
+                {#if s.kind === 'static'}
+                  <span class="mono">{s.root}</span>
+                  {#if s.spa_fallback}<span class="badge outline">SPA</span>{/if}
+                {:else if ts.length === 0 && srcs.length === 0}
                   <span class="badge" data-variant="warning">no targets</span>
                 {:else}
                   {#each ts as t}
@@ -504,7 +522,7 @@
               </td>
               <td class="actions">
                 <button class="ghost small" onclick={() => openEdit(s)}>Edit</button>
-                <button class="ghost small" data-variant="danger" onclick={() => del(s)}>Delete</button>
+                <button class="ghost small" data-variant="danger" disabled={s.kind === 'static' && !hasRole('admin')} onclick={() => del(s)}>Delete</button>
               </td>
             </tr>
           {/each}
@@ -519,6 +537,27 @@
     Name
     <input bind:value={form.name} placeholder="my-api" />
   </label>
+  <label data-field>
+    Service type
+    <select bind:value={form.kind} disabled={editing?.kind === 'static' && !hasRole('admin')}>
+      <option value="proxy">Proxy upstream</option>
+      <option value="static" disabled={!hasRole('admin')}>Static site</option>
+    </select>
+  </label>
+  {#if form.kind === 'static'}
+    <label data-field>
+      Root directory
+      <input class="mono" bind:value={form.root} placeholder="/srv/www/my-site" />
+      <span data-hint>Admin role required. Use a dedicated public directory, not the filesystem root, a system directory or Raahi's database directory. Files use the existing HTTP/HTTPS listeners. Directories serve index.html; request paths with dot-prefixed segments and links outside this root are blocked.</span>
+    </label>
+    <label data-field>
+      <span><input type="checkbox" role="switch" bind:checked={form.spa_fallback} /> SPA fallback</span>
+      <span data-hint>Serve the root index.html for missing extensionless paths. Missing JS, CSS and other files still return 404.</span>
+    </label>
+    {#if editing && editing.kind !== 'static'}
+      <p class="muted">Remove this service's targets, discovery sources and stream routes before switching to static hosting.</p>
+    {/if}
+  {:else}
   <div class="row">
     <label data-field>
       Protocol
@@ -574,7 +613,9 @@
     </span>
   </label>
 
-  {#if editing}
+  {/if}
+
+  {#if editing && form.kind === 'proxy'}
     <hr />
     <h3 class="sub">Targets</h3>
     <div class="tgts">
@@ -841,7 +882,7 @@
 
   {#snippet footer()}
     <button class="ghost" onclick={() => (open = false)}>Close</button>
-    <button onclick={save}>{editing ? 'Save' : 'Create'}</button>
+    <button onclick={save} disabled={(form.kind === 'static' || editing?.kind === 'static') && !hasRole('admin')}>{editing ? 'Save' : 'Create'}</button>
   {/snippet}
 </Drawer>
 

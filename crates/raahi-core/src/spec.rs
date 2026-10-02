@@ -37,6 +37,13 @@ pub(crate) fn d_obj() -> serde_json::Value {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ServiceSpec {
     pub name: String,
+    #[serde(default)]
+    pub kind: ServiceKind,
+    /// Absolute directory on the Raahi host. Required for static services.
+    #[serde(default)]
+    pub root: Option<String>,
+    #[serde(default)]
+    pub spa_fallback: bool,
     #[serde(default = "d_http")]
     pub protocol: Protocol,
     #[serde(default = "d_connect")]
@@ -56,6 +63,27 @@ pub struct ServiceSpec {
     /// Optional HTTP health-check path (e.g. `/healthz`); unset = TCP check.
     #[serde(default)]
     pub health_path: Option<String>,
+}
+
+impl ServiceSpec {
+    pub fn validate(&self) -> Result<(), String> {
+        match self.kind {
+            ServiceKind::Static => {
+                let root = self.root.as_deref().ok_or("static services require root")?;
+                if root.trim().is_empty()
+                    || root.contains('\0')
+                    || !std::path::Path::new(root).is_absolute()
+                {
+                    return Err("static root must be an absolute directory path".into());
+                }
+            }
+            ServiceKind::Proxy if self.root.is_some() || self.spa_fallback => {
+                return Err("root and spa_fallback are only supported for static services".into());
+            }
+            ServiceKind::Proxy => {}
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

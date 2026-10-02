@@ -239,6 +239,9 @@ mod tests {
 
     fn svc(id: Id) -> Service {
         Service {
+            kind: Default::default(),
+            root: None,
+            spa_fallback: false,
             upstream_authority: None,
             id,
             name: format!("svc{id}"),

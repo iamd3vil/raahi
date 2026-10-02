@@ -26,6 +26,9 @@ async fn crud_and_snapshot_roundtrip() {
     // Service + two targets.
     let svc = store
         .create_service(&ServiceSpec {
+            kind: Default::default(),
+            root: None,
+            spa_fallback: false,
             upstream_authority: None,
             name: "api".into(),
             protocol: Protocol::Http,
@@ -123,6 +126,9 @@ async fn crud_and_snapshot_roundtrip() {
         .update_service(
             svc.id,
             &ServiceSpec {
+                kind: Default::default(),
+                root: None,
+                spa_fallback: false,
                 upstream_authority: None,
                 name: "api2".into(),
                 protocol: Protocol::Https,
@@ -193,6 +199,9 @@ async fn unique_violation_maps_to_conflict() {
     let url = tmp_db();
     let store = Store::connect(&url).await.unwrap();
     let spec = ServiceSpec {
+        kind: Default::default(),
+        root: None,
+        spa_fallback: false,
         upstream_authority: None,
         name: "dup".into(),
         protocol: Protocol::Http,
@@ -476,6 +485,9 @@ async fn discovery_reconciliation_preserves_ids_and_drains_missing_targets() {
     let store = Store::connect(&url).await.unwrap();
     let service = store
         .create_service(&ServiceSpec {
+            kind: Default::default(),
+            root: None,
+            spa_fallback: false,
             name: "discovered".into(),
             protocol: Protocol::Http,
             connect_timeout_ms: 1000,
@@ -563,6 +575,9 @@ async fn discovery_failure_marks_targets_stale_and_unusable() {
     let store = Store::connect(&url).await.unwrap();
     let service = store
         .create_service(&ServiceSpec {
+            kind: Default::default(),
+            root: None,
+            spa_fallback: false,
             name: "stale".into(),
             protocol: Protocol::Http,
             connect_timeout_ms: 1000,
@@ -658,6 +673,347 @@ certificates:
 
 fn doc(text: &str) -> ConfigDoc {
     parse_config(text, ConfigFormat::Yaml).unwrap()
+}
+
+#[tokio::test]
+async fn static_services_crud_declarative_and_export_roundtrip() {
+    let store = Store::connect(&tmp_db()).await.unwrap();
+    let input = serde_json::json!({"name":"site", "kind":"static", "root":"/srv/www/site", "spa_fallback":true});
+    let spec: ServiceSpec = serde_json::from_value(input).unwrap();
+    let service = store.create_service(&spec).await.unwrap();
+    assert_eq!(service.kind, ServiceKind::Static);
+    assert_eq!(service.root.as_deref(), Some("/srv/www/site"));
+    assert!(service.spa_fallback);
+    assert!(store.list_targets_for(service.id).await.unwrap().is_empty());
+    let mut updated = spec.clone();
+    updated.root = Some("/srv/www/updated".into());
+    store.update_service(service.id, &updated).await.unwrap();
+    let snapshot = store.build_snapshot().await.unwrap();
+    assert_eq!(snapshot.services[&service.id].root, updated.root);
+    let dumped = store.current_config().await.unwrap();
+    for format in [ConfigFormat::Json, ConfigFormat::Yaml, ConfigFormat::Huml] {
+        let text = render_config(&dumped, format).unwrap();
+        let report = store
+            .apply_config(&parse_config(&text, format).unwrap(), false)
+            .await
+            .unwrap();
+        assert!(
+            report.changes.is_empty(),
+            "{format:?}: {:?}",
+            report.changes
+        );
+    }
+    let exported = serde_json::json!({
+        "raahi_export_version": 1,
+        "services": [{"service": store.get_service(service.id).await.unwrap().unwrap(), "targets": []}]
+    });
+    let imported: ImportDoc = serde_json::from_value(exported).unwrap();
+    let other = Store::connect(&tmp_db()).await.unwrap();
+    other.import(&imported).await.unwrap();
+    let restored = other.list_services().await.unwrap().remove(0);
+    assert_eq!(restored.kind, ServiceKind::Static);
+    assert_eq!(restored.root, updated.root);
+    assert!(restored.spa_fallback);
+
+    // Static sites remain routable even without upstream targets.
+    let config = doc(
+        "raahi_config: 1\nservices:\n  - { name: site, kind: static, root: /srv/www/site }\nroutes:\n  - { name: site, service: site, hosts: [site.test], paths: [/] }\n",
+    );
+    store.apply_config(&config, false).await.unwrap();
+    let snapshot = store.build_snapshot().await.unwrap();
+    assert_eq!(
+        snapshot
+            .match_route("site.test", "/", "GET", &|_| None)
+            .unwrap()
+            .service
+            .kind,
+        ServiceKind::Static
+    );
+}
+
+#[tokio::test]
+async fn static_services_reject_invalid_roots_and_upstream_resources() {
+    let store = Store::connect(&tmp_db()).await.unwrap();
+    for input in [
+        serde_json::json!({"name":"bad", "kind":"static"}),
+        serde_json::json!({"name":"bad", "kind":"static", "root":"relative"}),
+        serde_json::json!({"name":"bad", "root":"/srv/www"}),
+        serde_json::json!({"name":"bad", "spa_fallback":true}),
+    ] {
+        assert!(
+            store
+                .create_service(&serde_json::from_value(input).unwrap())
+                .await
+                .is_err()
+        );
+    }
+    let spec: ServiceSpec = serde_json::from_value(
+        serde_json::json!({"name":"site", "kind":"static", "root":"/srv/www"}),
+    )
+    .unwrap();
+    let service = store.create_service(&spec).await.unwrap();
+    let target: TargetSpec =
+        serde_json::from_value(serde_json::json!({"host":"127.0.0.1", "port":80})).unwrap();
+    let error = store.create_target(service.id, &target).await.unwrap_err();
+    assert!(
+        matches!(error, raahi_store::StoreError::Invalid(_)),
+        "{error}"
+    );
+    let source: DiscoverySourceSpec =
+        serde_json::from_value(serde_json::json!({"name":"dns", "provider":"dns"})).unwrap();
+    assert!(
+        store
+            .create_discovery_source(service.id, &source)
+            .await
+            .is_err()
+    );
+    let stream = StreamRouteSpec {
+        name: "tcp".into(),
+        listen_addr: "127.0.0.1:12345".into(),
+        service_id: service.id,
+        enabled: true,
+    };
+    assert!(store.create_stream_route(&stream).await.is_err());
+
+    let proxy_spec: ServiceSpec =
+        serde_json::from_value(serde_json::json!({"name":"upstream"})).unwrap();
+    let proxy = store.create_service(&proxy_spec).await.unwrap();
+    assert_eq!(proxy.kind, ServiceKind::Proxy);
+    let backend = store.create_target(proxy.id, &target).await.unwrap();
+    let mut change = spec.clone();
+    change.name = proxy.name;
+    assert!(store.update_service(proxy.id, &change).await.is_err());
+    store.delete_target(backend.id).await.unwrap();
+    assert!(
+        store
+            .update_service(proxy.id, &change)
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    let invalid = doc(
+        "raahi_config: 1\nservices:\n  - name: broken\n    kind: static\n    root: /srv/www\n    targets: [{host: localhost, port: 80}]\n",
+    );
+    assert!(store.apply_config(&invalid, false).await.is_err());
+    assert_eq!(store.list_services().await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn declarative_converts_services_atomically_and_respects_stream_intent() {
+    let store = Store::connect(&tmp_db()).await.unwrap();
+    let proxy = doc(
+        "raahi_config: 1\nservices:\n  - name: site\n    targets: [{host: localhost, port: 80}]\n    discovery: [{name: dns, provider: dns, config: {hostname: localhost}}]\nstream_routes:\n  - {name: tcp, service: site, listen_addr: '127.0.0.1:12345'}\n",
+    );
+    store.apply_config(&proxy, false).await.unwrap();
+    let service_id = store.list_services().await.unwrap()[0].id;
+    let source = store.list_discovery_sources().await.unwrap().remove(0);
+    store
+        .reconcile_discovery(
+            &source,
+            &[DiscoveredEndpoint {
+                key: "discovered".into(),
+                host: "10.0.0.1".into(),
+                port: 80,
+                weight: 100,
+                priority: 0,
+                metadata: Default::default(),
+            }],
+            "1",
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(store.list_targets_for(service_id).await.unwrap().len(), 2);
+    let static_site =
+        doc("raahi_config: 1\nservices:\n  - {name: site, kind: static, root: /srv/www/site}\n");
+    // Absent stream_routes must not silently delete a still-owned listener.
+    assert!(store.apply_config(&static_site, false).await.is_err());
+    assert_eq!(
+        store.get_service(service_id).await.unwrap().unwrap().kind,
+        ServiceKind::Proxy
+    );
+    assert_eq!(store.list_targets_for(service_id).await.unwrap().len(), 2);
+    assert_eq!(store.list_discovery_sources().await.unwrap().len(), 1);
+    let mut retaining = static_site.clone();
+    retaining.stream_routes = proxy.stream_routes.clone();
+    assert!(store.apply_config(&retaining, false).await.is_err());
+
+    let mut deleting = static_site.clone();
+    deleting.stream_routes = Some(vec![]);
+    let dry = store.apply_config(&deleting, true).await.unwrap();
+    assert!(
+        dry.touched("target") && dry.touched("discovery_source") && dry.touched("stream_route")
+    );
+    assert_eq!(store.list_targets_for(service_id).await.unwrap().len(), 2);
+    assert_eq!(store.list_stream_routes().await.unwrap().len(), 1);
+    let applied = store.apply_config(&deleting, false).await.unwrap();
+    assert_eq!(
+        serde_json::to_value(&dry.changes).unwrap(),
+        serde_json::to_value(&applied.changes).unwrap()
+    );
+    assert_eq!(
+        store.get_service(service_id).await.unwrap().unwrap().kind,
+        ServiceKind::Static
+    );
+    assert!(store.list_targets_for(service_id).await.unwrap().is_empty());
+    assert!(store.list_discovery_sources().await.unwrap().is_empty());
+    assert!(store.list_stream_routes().await.unwrap().is_empty());
+    assert!(
+        store
+            .apply_config(&deleting, false)
+            .await
+            .unwrap()
+            .changes
+            .is_empty()
+    );
+
+    // Static -> proxy can add targets, discovery and stream routes in one apply.
+    store.apply_config(&proxy, false).await.unwrap();
+    assert_eq!(store.list_services().await.unwrap()[0].id, service_id);
+    assert_eq!(store.list_targets_for(service_id).await.unwrap().len(), 1);
+    assert_eq!(store.list_discovery_sources().await.unwrap().len(), 1);
+    let stream_id = store.list_stream_routes().await.unwrap()[0].id;
+    // Move a stream route to a newly-created proxy while converting its owner.
+    let moving = doc(
+        "raahi_config: 1\nservices:\n  - {name: site, kind: static, root: /srv/www/site}\n  - {name: backend, targets: [{host: localhost, port: 8080}]}\nstream_routes:\n  - {name: tcp, service: backend, listen_addr: '127.0.0.1:12345'}\n",
+    );
+    store.apply_config(&moving, false).await.unwrap();
+    let stream = store.list_stream_routes().await.unwrap().remove(0);
+    assert_eq!(stream.id, stream_id);
+    assert_ne!(stream.service_id, service_id);
+    assert_eq!(
+        store.get_service(service_id).await.unwrap().unwrap().kind,
+        ServiceKind::Static
+    );
+    assert!(
+        store
+            .apply_config(&moving, false)
+            .await
+            .unwrap()
+            .changes
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn static_root_policy_supports_in_memory_databases() {
+    for url in [
+        "sqlite::memory:",
+        "sqlite://file:raahi-memory-test?mode=memory&cache=shared",
+    ] {
+        let store = Store::connect(url).await.unwrap();
+        let spec: ServiceSpec = serde_json::from_value(serde_json::json!({
+            "name": "site", "kind": "static", "root": "/srv/www/site"
+        }))
+        .unwrap();
+        store
+            .create_service(&spec)
+            .await
+            .unwrap_or_else(|e| panic!("{url}: {e}"));
+        let forbidden = ServiceSpec {
+            root: Some("/".into()),
+            ..spec
+        };
+        assert!(store.update_service(1, &forbidden).await.is_err());
+        store.pool().close().await;
+    }
+}
+
+#[tokio::test]
+async fn static_roots_reject_system_and_database_directories_on_all_write_paths() {
+    let fixture = std::path::PathBuf::from(tmp_db().strip_prefix("sqlite://").unwrap())
+        .with_extension("roots");
+    let data = fixture.join("data");
+    let site = fixture.join("data-site");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::create_dir_all(&site).unwrap();
+    let store = Store::connect(&format!("sqlite://{}", data.join("live.db").display()))
+        .await
+        .unwrap();
+    let spec: ServiceSpec =
+        serde_json::from_value(serde_json::json!({"name":"site", "kind":"static", "root":site}))
+            .unwrap();
+    let service = store.create_service(&spec).await.unwrap();
+    let mut roots = vec![
+        "/".to_string(),
+        "/proc".into(),
+        "/proc/self".into(),
+        "/sys".into(),
+        "/dev".into(),
+        data.display().to_string(),
+        fixture.display().to_string(),
+        format!("{}/../data", site.display()),
+    ];
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&data, fixture.join("db-alias")).unwrap();
+        std::os::unix::fs::symlink("/dev", fixture.join("device-alias")).unwrap();
+        std::fs::create_dir(data.join("nested")).unwrap();
+        std::os::unix::fs::symlink(data.join("nested"), fixture.join("nested-alias")).unwrap();
+        std::os::unix::fs::symlink("missing", fixture.join("dangling-alias")).unwrap();
+        roots.push(fixture.join("db-alias").display().to_string());
+        roots.push(fixture.join("device-alias").display().to_string());
+        roots.push(fixture.join("nested-alias/..").display().to_string());
+        roots.push(fixture.join("dangling-alias").display().to_string());
+    }
+    let original = store.current_config().await.unwrap();
+    for root in roots {
+        let bad = ServiceSpec {
+            root: Some(root.clone()),
+            ..spec.clone()
+        };
+        let create = ServiceSpec {
+            name: "rejected-site".into(),
+            ..bad.clone()
+        };
+        assert!(
+            matches!(
+                store.create_service(&create).await,
+                Err(raahi_store::StoreError::Invalid(_))
+            ),
+            "create: {root}"
+        );
+        assert!(
+            store.update_service(service.id, &bad).await.is_err(),
+            "update: {root}"
+        );
+        let mut declared = original.clone();
+        declared.services.as_mut().unwrap()[0].root = Some(root.clone());
+        assert!(
+            store.apply_config(&declared, false).await.is_err(),
+            "apply: {root}"
+        );
+        assert!(
+            store.apply_config(&declared, true).await.is_err(),
+            "dry run: {root}"
+        );
+        let mut imported = service.clone();
+        imported.root = Some(root.clone());
+        let backup: ImportDoc = serde_json::from_value(serde_json::json!({"raahi_export_version":1,"services":[{"service":imported,"targets":[]}]})).unwrap();
+        assert!(store.import(&backup).await.is_err(), "import: {root}");
+        assert_eq!(
+            store.get_service(service.id).await.unwrap().unwrap().root,
+            spec.root
+        );
+    }
+    // Future deployment directories and safe root symlinks remain supported.
+    let future = ServiceSpec {
+        root: Some(site.join("future").display().to_string()),
+        ..spec.clone()
+    };
+    store.update_service(service.id, &future).await.unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&site, fixture.join("site-alias")).unwrap();
+        let alias = ServiceSpec {
+            root: Some(fixture.join("site-alias").display().to_string()),
+            ..spec
+        };
+        store.update_service(service.id, &alias).await.unwrap();
+    }
+    store.pool().close().await;
+    std::fs::remove_dir_all(fixture).unwrap();
 }
 
 #[tokio::test]

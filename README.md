@@ -22,6 +22,7 @@ It routes requests to healthy upstreams and handles TLS, load balancing, authent
 
 - **HTTP and WebSocket routing.** Match exact or wildcard hostnames, path prefixes or regular expressions, methods, and headers.
 - **TCP proxying.** Open raw TCP listeners for databases, Redis, and other non-HTTP services.
+- **Static hosting.** Serve a local directory on the same HTTP/HTTPS listeners, without another server or port. Supports index pages, SPA fallback, conditional requests, and byte ranges.
 - **TLS termination.** Select certificates by SNI and replace them while the HTTPS listener remains active.
 - **Automatic certificates.** Issue and renew certificates through Let's Encrypt, ZeroSSL, or a custom ACME provider. Cloudflare DNS-01 supports wildcard certificates.
 - **Load balancing and health checks.** Use round-robin, weighted, random, or client-IP hashing across healthy targets.
@@ -36,7 +37,7 @@ It routes requests to healthy upstreams and handles TLS, load balancing, authent
 
 Raahi uses four main resources:
 
-- A **service** describes an upstream application and its connection settings.
+- A **service** describes an upstream application or a local static directory.
 - A **target** is a server that can handle requests for a service.
 - A **route** selects a service by hostname, path, method, or header.
 - A **plugin** adds authentication, access rules, caching, limits, transforms, or other policy.
@@ -48,6 +49,89 @@ request -> route -> plugins -> load balancer -> healthy target
 The proxy and management API run in one process. Raahi stores configuration in SQLite. Each successful mutation builds a complete configuration and swaps it into the running proxy before the API response returns.
 
 Raahi uses [Pingora](https://github.com/cloudflare/pingora) for proxying, Axum for the management API, and Svelte for the admin UI.
+
+### Static sites
+
+In **Services**, select **Static site**, enter an absolute directory path on the
+Raahi host, then create a route for its hostname. Static services need no targets.
+Existing services remain proxy services by default.
+
+Creating, editing, converting, or deleting a static service requires the Admin
+role. Editors can still manage proxy services. Choosing a static root grants read
+access to that directory's contents. CRUD, declarative apply, and import reject
+`/`, roots under `/proc`, `/sys`, or `/dev`, and roots that contain Raahi's database
+directory, including resolved symlink aliases. Run Raahi as a dedicated
+unprivileged user with read access only to the files it needs.
+
+The equivalent declarative configuration is:
+
+```yaml
+raahi_config: 1
+services:
+  - name: docs
+    kind: static
+    root: /srv/www/docs
+    spa_fallback: false
+routes:
+  - name: docs.example.com
+    service: docs
+    hosts: [docs.example.com]
+    paths: [/]
+```
+
+Files stream directly through Pingora. Directories serve `index.html`; requests
+without a directory's trailing slash redirect to the slash form. To mount a site
+under `/docs`, use `paths: [/docs]` and `strip_path: true` on its route.
+
+Enable `spa_fallback` for client-side routing. Missing extensionless paths then
+serve the root `index.html`; missing assets such as `.js` and `.css` still return
+404. Directory listing, uploads, and executable scripts are not supported.
+
+Request paths with dot-prefixed segments and traversal paths are blocked.
+Relative symlinks work only within the root; absolute symlinks and links outside
+it are rejected. The Raahi user must be able to read the
+directory. The configured root itself may be a deployment symlink, and Raahi
+opens it per request so switching that link publishes the new files. Use a
+dedicated site directory, not your home directory. Container deployments must
+mount the files and use the path inside the container.
+
+Confinement applies when opening files, not just when validating URL strings.
+Raahi decodes each path once and rejects malformed escapes, dot segments,
+backslashes, and control characters. All file, directory-index, and SPA-fallback
+lookups use the same root directory handle, so replacing a symlink between a
+metadata check and an open cannot redirect the open outside that root.
+
+Keep the configured root, its parents, and any deployment symlink under trusted
+administrative control. This prevents HTTP path traversal; it is not an OS
+sandbox against local users who can replace the root or publish sensitive files
+inside it through hard links or mounts. Treat the site's file tree as public,
+including any in-root symlink targets.
+
+The root restrictions are configuration-time safeguards, not an OS sandbox.
+They do not prevent a local administrator from later redirecting a deployment
+symlink to a sensitive directory. Non-regular files, including devices, sockets,
+and FIFOs, are rejected before a read open. A post-open check prevents streaming
+files replaced with non-regular files during lookup. The metadata check and read
+open are separate, so local users must not be able to publish device nodes in
+the site tree. Read opens also use nonblocking mode and cannot acquire a
+controlling terminal.
+
+Declarative apply can convert a proxy to static in one transaction, removing its
+targets and discovery sources first. Any stream routes owned by that service
+must be removed or moved to a proxy service in the same document's
+`stream_routes` section. Omitting that section preserves existing stream routes
+and blocks conversion if they still reference the service.
+
+Route plugins also apply to static sites, including authentication, redirects,
+response headers, compression, body transforms, and request logging. Partial
+responses are not compressed or transformed. If body transformation is enabled,
+Raahi serves the full representation without the original file's validators.
+The proxy-cache plugin caches static responses for its configured TTL; it does
+not watch the filesystem. Purge it after deploying files or leave it disabled.
+
+To run the isolated end-to-end check after `cargo build`, use
+`python3 scripts/test-static-hosting.py`. It needs Python 3 and OpenSSL and runs
+against a temporary database on loopback, not your live instance.
 
 ## Quick start
 

@@ -11,6 +11,9 @@ use crate::{Store, StoreError};
 /// Map insert/update DB errors to friendlier store errors.
 pub(crate) fn map_err(e: sqlx::Error) -> StoreError {
     if let Some(db) = e.as_database_error() {
+        if db.code().as_deref() == Some("1811") {
+            return StoreError::Invalid(db.message().to_string());
+        }
         if db.is_unique_violation() {
             return StoreError::Conflict(db.message().to_string());
         }
@@ -39,11 +42,12 @@ impl Store {
     }
 
     pub async fn create_service(&self, s: &ServiceSpec) -> Result<Service, StoreError> {
+        self.validate_service(s).await?;
         let now = Utc::now().to_rfc3339();
         let res = sqlx::query(
             "INSERT INTO services (name, protocol, connect_timeout_ms, read_timeout_ms, \
-             write_timeout_ms, retries, lb_algorithm, upstream_authority, tls_sni, health_path, created_at, updated_at) \
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+             write_timeout_ms, retries, lb_algorithm, upstream_authority, tls_sni, health_path, kind, root, spa_fallback, created_at, updated_at) \
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(&s.name)
         .bind(s.protocol.as_str())
@@ -55,6 +59,9 @@ impl Store {
         .bind(&s.upstream_authority)
         .bind(&s.tls_sni)
         .bind(&s.health_path)
+        .bind(s.kind.as_str())
+        .bind(&s.root)
+        .bind(s.spa_fallback)
         .bind(&now)
         .bind(&now)
         .execute(&self.pool)
@@ -68,10 +75,11 @@ impl Store {
         id: Id,
         s: &ServiceSpec,
     ) -> Result<Option<Service>, StoreError> {
+        self.validate_service(s).await?;
         let now = Utc::now().to_rfc3339();
         let res = sqlx::query(
             "UPDATE services SET name=?, protocol=?, connect_timeout_ms=?, read_timeout_ms=?, \
-             write_timeout_ms=?, retries=?, lb_algorithm=?, upstream_authority=?, tls_sni=?, health_path=?, updated_at=? WHERE id=?",
+             write_timeout_ms=?, retries=?, lb_algorithm=?, upstream_authority=?, tls_sni=?, health_path=?, kind=?, root=?, spa_fallback=?, updated_at=? WHERE id=?",
         )
         .bind(&s.name)
         .bind(s.protocol.as_str())
@@ -83,6 +91,9 @@ impl Store {
         .bind(&s.upstream_authority)
         .bind(&s.tls_sni)
         .bind(&s.health_path)
+        .bind(s.kind.as_str())
+        .bind(&s.root)
+        .bind(s.spa_fallback)
         .bind(&now)
         .bind(id)
         .execute(&self.pool)

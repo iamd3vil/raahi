@@ -1,6 +1,7 @@
 // Types mirroring the Raahi core model (JSON shapes from the admin API).
 
 export type Protocol = 'http' | 'https';
+export type ServiceKind = 'proxy' | 'static';
 export type LbAlgorithm = 'round_robin' | 'random' | 'consistent' | 'weighted';
 export type PluginType =
   | 'key-auth'
@@ -28,6 +29,9 @@ export type CredentialType = 'key-auth' | 'basic-auth' | 'jwt';
 export interface Service {
   id: number;
   name: string;
+  kind: ServiceKind;
+  root: string | null;
+  spa_fallback: boolean;
   protocol: Protocol;
   connect_timeout_ms: number;
   read_timeout_ms: number;

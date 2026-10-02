@@ -21,6 +21,11 @@ bcrypt = { workspace = true }
 base64 = "0.22"
 http = "1"
 bytes = "1"
+cap-std = "3"
+libc = "0.2"
+httpdate = "1"
+percent-encoding = "2"
+mime_guess = { workspace = true }
 jsonwebtoken = "9"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 wasmi = "0.40"

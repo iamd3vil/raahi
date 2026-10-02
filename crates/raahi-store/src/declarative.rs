@@ -68,6 +68,16 @@ impl Store {
         dry_run: bool,
     ) -> Result<ApplyReport, StoreError> {
         check_doc(doc)?;
+        for service in doc.services.iter().flatten() {
+            self.validate_service(&service.spec()).await?;
+            if service.kind == ServiceKind::Static
+                && (!service.targets.is_empty() || !service.discovery.is_empty())
+            {
+                return Err(StoreError::Invalid(
+                    "static services cannot have targets or discovery sources".into(),
+                ));
+            }
+        }
         let mut report = ApplyReport {
             dry_run,
             ..Default::default()
@@ -84,9 +94,27 @@ impl Store {
             .iter()
             .map(|s| (s.name.clone(), s.id))
             .collect();
+        // Defer proxy -> static switches until declared stream routes have been
+        // deleted or moved. First create/update all other services, so a stream
+        // route can move to a newly created proxy in the same transaction.
+        let converting: HashSet<&str> = doc
+            .services
+            .iter()
+            .flatten()
+            .filter(|s| {
+                s.kind == ServiceKind::Static
+                    && current_services
+                        .iter()
+                        .any(|e| e.name == s.name && e.kind == ServiceKind::Proxy)
+            })
+            .map(|s| s.name.as_str())
+            .collect();
 
         if let Some(services) = &doc.services {
             for cs in services {
+                if converting.contains(cs.name.as_str()) {
+                    continue;
+                }
                 let id = upsert_service(&mut tx, &current_services, cs, &mut report).await?;
                 svc_ids.insert(cs.name.clone(), id);
                 apply_targets(&mut tx, id, &cs.name, &cs.targets, &mut report).await?;
@@ -96,15 +124,28 @@ impl Store {
             // file may reference them.
             svc_ids.retain(|name, _| services.iter().any(|s| &s.name == name));
         }
+        if let Some(stream_routes) = &doc.stream_routes {
+            apply_stream_routes(&mut tx, stream_routes, &svc_ids, &mut report).await?;
+        }
+        for cs in doc
+            .services
+            .iter()
+            .flatten()
+            .filter(|s| converting.contains(s.name.as_str()))
+        {
+            let id = svc_ids[&cs.name];
+            // Nested lists are fully managed; for static services they must be
+            // empty. Delete upstream state before the kind-update trigger runs.
+            apply_targets(&mut tx, id, &cs.name, &[], &mut report).await?;
+            apply_discovery(&mut tx, id, &cs.name, &[], &mut report).await?;
+            upsert_service(&mut tx, &current_services, cs, &mut report).await?;
+        }
         if let Some(certs) = &doc.certificates {
             apply_certificates(&mut tx, certs, &mut report).await?;
         }
         let mut route_ids = HashMap::new();
         if let Some(routes) = &doc.routes {
             route_ids = apply_routes(&mut tx, routes, &svc_ids, &mut report).await?;
-        }
-        if let Some(stream_routes) = &doc.stream_routes {
-            apply_stream_routes(&mut tx, stream_routes, &svc_ids, &mut report).await?;
         }
         if let Some(plugins) = &doc.plugins {
             apply_plugins(&mut tx, Owner::Global, plugins, &mut report).await?;
@@ -186,6 +227,9 @@ impl Store {
                         let spec = service_spec(s);
                         ConfigService {
                             name: spec.name,
+                            kind: spec.kind,
+                            root: spec.root,
+                            spa_fallback: spec.spa_fallback,
                             protocol: spec.protocol,
                             connect_timeout_ms: spec.connect_timeout_ms,
                             read_timeout_ms: spec.read_timeout_ms,
@@ -344,6 +388,9 @@ fn check_doc(doc: &ConfigDoc) -> Result<(), StoreError> {
 fn service_spec(s: &Service) -> ServiceSpec {
     ServiceSpec {
         name: s.name.clone(),
+        kind: s.kind,
+        root: s.root.clone(),
+        spa_fallback: s.spa_fallback,
         protocol: s.protocol,
         connect_timeout_ms: s.connect_timeout_ms,
         read_timeout_ms: s.read_timeout_ms,
@@ -384,7 +431,7 @@ async fn upsert_service(
             bind_service(sqlx::query(
                 "UPDATE services SET name=?, protocol=?, connect_timeout_ms=?, read_timeout_ms=?, \
                  write_timeout_ms=?, retries=?, lb_algorithm=?, upstream_authority=?, tls_sni=?, \
-                 health_path=?, updated_at=? WHERE id=?",
+                 health_path=?, kind=?, root=?, spa_fallback=?, updated_at=? WHERE id=?",
             ), &spec, &now)
             .bind(e.id)
             .execute(&mut *conn)
@@ -397,7 +444,7 @@ async fn upsert_service(
             let res = bind_service(sqlx::query(
                 "INSERT INTO services (name, protocol, connect_timeout_ms, read_timeout_ms, \
                  write_timeout_ms, retries, lb_algorithm, upstream_authority, tls_sni, health_path, \
-                 updated_at, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                 kind, root, spa_fallback, updated_at, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             ), &spec, &now)
             .bind(&now)
             .execute(&mut *conn)
@@ -423,6 +470,9 @@ fn bind_service<'q>(q: Query<'q>, spec: &'q ServiceSpec, now: &'q str) -> Query<
         .bind(&spec.upstream_authority)
         .bind(&spec.tls_sni)
         .bind(&spec.health_path)
+        .bind(spec.kind.as_str())
+        .bind(&spec.root)
+        .bind(spec.spa_fallback)
         .bind(now)
 }
 

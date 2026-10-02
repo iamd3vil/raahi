@@ -408,6 +408,7 @@ paths:
     post:
       tags: [Services]
       summary: Create a service
+      description: Proxy services require Editor. Static services or writes carrying static configuration require Admin.
       operationId: createService
       requestBody: {$ref: '#/components/requestBodies/ServiceInput'}
       responses:
@@ -418,6 +419,7 @@ paths:
               schema: {$ref: '#/components/schemas/Service'}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
         '500': {$ref: '#/components/responses/InternalError'}
   /api/v1/services/{id}:
     parameters:
@@ -436,7 +438,7 @@ paths:
     put:
       tags: [Services]
       summary: Replace a service
-      description: Full replacement; omitted optional fields reset to their defaults.
+      description: Full replacement; omitted optional fields reset to their defaults. Writes involving an existing or submitted static service, including conversions, require Admin. Other service writes require Editor.
       operationId: updateService
       requestBody: {$ref: '#/components/requestBodies/ServiceInput'}
       responses:
@@ -445,16 +447,18 @@ paths:
           content: {application/json: {schema: {$ref: '#/components/schemas/Service'}}}
         '400': {$ref: '#/components/responses/BadRequest'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '500': {$ref: '#/components/responses/InternalError'}
     delete:
       tags: [Services]
       summary: Delete a service
-      description: Also removes dependent targets, routes, stream routes, and plugins.
+      description: Also removes dependent targets, routes, stream routes, and plugins. Deleting a static service requires Admin; deleting a proxy service requires Editor.
       operationId: deleteService
       responses:
         '200': {$ref: '#/components/responses/Deleted'}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '500': {$ref: '#/components/responses/InternalError'}
   /api/v1/services/{service_id}/targets:
@@ -1526,6 +1530,9 @@ components:
       required: [name]
       properties:
         name: {type: string, minLength: 1, example: orders}
+        kind: {type: string, enum: [proxy, static], default: proxy, description: "Static services serve files directly on the existing listeners and have no upstream targets."}
+        root: {type: string, nullable: true, example: /srv/www/docs, description: "Absolute directory on the Raahi host. Required for kind static; omitted for proxy. Requires Admin. Cannot be /, lie under /proc, /sys or /dev, or contain Raahi's database directory. Existing symlink components are resolved for these checks."}
+        spa_fallback: {type: boolean, default: false, description: "Static services only. Missing extensionless paths serve the root index.html."}
         protocol: {$ref: '#/components/schemas/Protocol'}
         connect_timeout_ms: {type: integer, format: int64, minimum: 0, default: 5000}
         read_timeout_ms: {type: integer, format: int64, minimum: 0, default: 60000}
@@ -1538,7 +1545,7 @@ components:
     Service:
       allOf:
         - type: object
-          required: [id, name, protocol, connect_timeout_ms, read_timeout_ms, write_timeout_ms, retries, lb_algorithm, tls_sni, upstream_authority, health_path, created_at, updated_at]
+          required: [id, name, kind, root, spa_fallback, protocol, connect_timeout_ms, read_timeout_ms, write_timeout_ms, retries, lb_algorithm, tls_sni, upstream_authority, health_path, created_at, updated_at]
           properties:
             id: {$ref: '#/components/schemas/Id'}
             created_at: {$ref: '#/components/schemas/Timestamp'}
@@ -2242,6 +2249,9 @@ components:
       required: [name]
       properties:
         name: {type: string}
+        kind: {type: string, enum: [proxy, static], default: proxy}
+        root: {type: string, description: Absolute directory on the Raahi host for static services.}
+        spa_fallback: {type: boolean, default: false}
         protocol: {type: string, enum: [http, https], default: http}
         connect_timeout_ms: {type: integer, default: 5000}
         read_timeout_ms: {type: integer, default: 60000}

@@ -11,6 +11,7 @@ pub enum ApiError {
     Store(StoreError),
     NotFound,
     BadRequest(String),
+    Forbidden(String),
     Internal(String),
 }
 
@@ -30,6 +31,7 @@ impl IntoResponse for ApiError {
         let (status, msg) = match self {
             ApiError::NotFound => (StatusCode::NOT_FOUND, "not found".to_string()),
             ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
+            ApiError::Forbidden(m) => (StatusCode::FORBIDDEN, m),
             ApiError::Store(e) => {
                 tracing::error!("store error: {e}");
                 (
