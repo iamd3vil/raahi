@@ -159,6 +159,11 @@ raahi [OPTIONS]
   --ui-dir <DIR>        built admin UI         [env RAAHI_UI_DIR]
   --threads <N>         proxy worker threads   [env RAAHI_THREADS]
   --seed                create the demo service and route when the DB is empty
+
+raahi apply -f <FILE> [--dry-run]   apply a YAML/HUML/JSON config file
+raahi dump [--format yaml|huml|json] print the running config as a file
+  --url <URL>           admin API URL          [env RAAHI_URL]
+  --token <TOKEN>       admin token            [env RAAHI_TOKEN]
 ```
 
 Use `RUST_LOG` to set log levels. The default is `info`.
@@ -180,6 +185,8 @@ curl -X POST http://127.0.0.1:9080/api/v1/services \
 ```
 
 PUT replaces the complete resource rather than applying a partial update. See the [API guide](https://raahi.sarat.dev/api/overview/) and [interactive reference](https://raahi.sarat.dev/api-reference/).
+
+To keep configuration in git, write it as a YAML or HUML file and apply it with `raahi apply`. The [config files guide](https://raahi.sarat.dev/guides/config-files/) covers the format.
 
 ## Development
 

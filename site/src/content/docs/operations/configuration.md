@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-Routes, upstreams, plugins, users, and certificates live in the Raahi database. Startup options select the database, admin UI files, listener overrides, and worker count.
+Routes, upstreams, plugins, users, and certificates live in the Raahi database. You change them through the admin UI, the API, or `raahi apply` with a [config file](/guides/config-files/). Startup options select the database, admin UI files, listener overrides, and worker count.
 
 ## Startup options
 
@@ -18,6 +18,19 @@ Routes, upstreams, plugins, users, and certificates live in the Raahi database. 
 | `--admin-addr <ADDR>` | | Override the stored management listener |
 | `--ui-dir <DIR>` | `RAAHI_UI_DIR` | Built admin UI directory. Default: `ui/build` |
 | `--threads <N>` | `RAAHI_THREADS` | Proxy worker threads. Default: available CPU cores |
+
+## Client commands
+
+The same binary also talks to a running instance through its management API. Without a subcommand, `raahi` starts the server.
+
+| Command | Purpose |
+| --- | --- |
+| `raahi apply -f <FILE> [--dry-run]` | Apply a YAML, HUML, or JSON [config file](/guides/config-files/) |
+| `raahi dump [--format yaml\|huml\|json]` | Print the running configuration as a config file |
+
+`--url` sets the management URL. It falls back to `RAAHI_URL`, then `http://127.0.0.1:9080`. `--token` sets the admin token and falls back to `RAAHI_TOKEN`. Both commands need the `admin` role.
+
+## Logging
 
 Use `RUST_LOG` to select log levels. Raahi logs at `info` by default.
 

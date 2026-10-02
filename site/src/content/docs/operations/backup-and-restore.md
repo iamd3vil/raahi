@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-Raahi can export its complete configuration as JSON and import that file into another instance. Use this for backups, migrations, or configuration stored in version control.
+Raahi can export its complete configuration as JSON and import that file into another instance. Use this for backups and migrations. To keep configuration in version control, use [config files](/guides/config-files/) instead. A config file names entities instead of using IDs, and `${VAR}` references keep secrets out of it.
 
 ## Export without secrets
 
