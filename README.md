@@ -189,9 +189,9 @@ GitHub Releases publishes Linux archives for amd64 and arm64. Each archive conta
 
 ```bash
 # Replace amd64 with arm64 when needed.
-archive=raahi-v0.3.0-linux-amd64.tar.gz
-curl -LO "https://github.com/iamd3vil/raahi/releases/download/v0.3.0/$archive"
-curl -LO https://github.com/iamd3vil/raahi/releases/download/v0.3.0/checksums.txt
+archive=raahi-v0.4.0-linux-amd64.tar.gz
+curl -LO "https://github.com/iamd3vil/raahi/releases/download/v0.4.0/$archive"
+curl -LO https://github.com/iamd3vil/raahi/releases/download/v0.4.0/checksums.txt
 checksum_line="$(grep -F "$archive" checksums.txt)"
 expected="${checksum_line#*$'\t'}"
 echo "$expected  $archive" | sha256sum -c -
@@ -208,7 +208,7 @@ docker run --rm \
   -p 8443:8443 \
   -p 127.0.0.1:9080:9080 \
   -v raahi-data:/data \
-  ghcr.io/iamd3vil/raahi:0.3.0
+  ghcr.io/iamd3vil/raahi:0.4.0
 ```
 
 The container stores `raahi.db` in `/data` and serves the bundled admin UI. The command binds the admin listener inside the container and publishes it only on host loopback.
@@ -312,11 +312,11 @@ cd site && npm install && npm run build
 
 ## Release notes
 
-- Config files. Write services, routes, plugins, consumers, and certificates in a YAML, HUML, or JSON file and apply it with `raahi apply`. See the [config files guide](https://raahi.sarat.dev/guides/config-files/).
-- `raahi dump` prints the running configuration as a file to start from.
-- No database migrations. `raahi` without a subcommand still starts the server.
+- Static hosting. Serve a local directory on the existing HTTP and HTTPS listeners. See [Static sites](#static-sites).
+- Raahi's built-in root store no longer trusts the eight compromised eMudhra intermediate CAs. Update `ca-certificates` on the host too, since ACME and upstream TLS use the system trust store.
+- Database migration `0012_static_services.sql` runs on first start. Back up before upgrading.
 - Native Linux archives for amd64 and arm64.
-- Multi-architecture container image at `ghcr.io/iamd3vil/raahi:0.3.0` and `ghcr.io/iamd3vil/raahi:latest`.
+- Multi-architecture container image at `ghcr.io/iamd3vil/raahi:0.4.0` and `ghcr.io/iamd3vil/raahi:latest`.
 - GitHub release publishing through [rlsr](https://rlsr.sarat.dev/).
 
 ## Current limits
