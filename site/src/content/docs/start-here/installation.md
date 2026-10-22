@@ -11,14 +11,14 @@ Raahi ships as one executable plus the built admin UI.
 
 - The latest stable Rust toolchain to compile Raahi
 - Node.js 22.12 or newer
-- `cmake`, Go, Perl, and a C or C++ compiler for native build dependencies
+- A C compiler for native build dependencies
 - `just` for the repository recipes
 - pnpm or npm for the admin UI
 
 On Debian or Ubuntu:
 
 ```bash
-sudo apt install build-essential cmake golang perl
+sudo apt install build-essential
 ```
 
 Run the repository check before building:
@@ -26,10 +26,6 @@ Run the repository check before building:
 ```bash
 just doctor
 ```
-
-:::note[Build dependencies]
-Go and Perl run code generators while compiling the TLS library. The Raahi executable does not require either runtime.
-:::
 
 ## Install a release
 
@@ -93,15 +89,6 @@ The archive is written under `dist/`. You need `zig` on `PATH` to build it. GitH
 tar xzf dist/raahi-v*-x86_64-unknown-linux-musl.tar.gz
 cd raahi-v*
 ./raahi
-```
-
-## Fix `stddef.h` build failures
-
-Some Linux distributions install libclang without its built-in C headers. The `just` recipes set `BINDGEN_EXTRA_CLANG_ARGS` when needed. Set it yourself if you run Cargo directly:
-
-```bash
-export BINDGEN_EXTRA_CLANG_ARGS="-I$(cc -print-file-name=include)"
-cargo build --release
 ```
 
 Continue with the [quickstart](/start-here/quickstart/) to run a local upstream and send traffic through Raahi.

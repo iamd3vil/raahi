@@ -20,7 +20,10 @@ pub use plugins::{MAX_COMPRESSION_LEVEL, purge_cache, validate_wasm, wat_to_wasm
 pub use proxy::{Ctx, RaahiProxy};
 pub use runtime::{BackendRt, ConfigHandle, RuntimeConfig, ServiceRuntime};
 pub use stream::{StreamProxyApp, stream_stats};
-pub use tls::{CertHandle, CertStore, sni_tls_settings, validate_cert};
+pub use tls::{
+    AlpnChallengeResponder, CertHandle, CertStore, cert_covers_host, sni_tls_settings,
+    validate_cert,
+};
 
 use raahi_core::ProxyConfig;
 

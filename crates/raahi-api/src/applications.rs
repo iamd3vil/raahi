@@ -21,8 +21,7 @@ pub async fn create(
                     .any(|h| raahi_core::host_matches(h, &spec.domain))
                     && raahi_proxy::validate_cert(&c.cert_pem, &c.key_pem).is_ok()
             })
-            .and_then(|c| pingora::tls::x509::X509::from_pem(c.cert_pem.as_bytes()).ok())
-            .is_some_and(|cert| cert.check_host(&spec.domain).unwrap_or(false));
+            .is_some_and(|c| raahi_proxy::cert_covers_host(&c.cert_pem, &spec.domain));
         if !usable {
             return Err(ApiError::BadRequest(format!(
                 "Add or issue a certificate covering {} in Certificates first",

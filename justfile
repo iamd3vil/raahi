@@ -1,21 +1,11 @@
 # Raahi — justfile
 # Run `just` to see all recipes, or `just --list` for grouped output.
-# Requires: just, latest stable cargo/rustc, pnpm ≥9 (or npm), cmake + Go + Perl + C/C++ toolchain
+# Requires: just, latest stable cargo/rustc, pnpm ≥9 (or npm), a C toolchain
 # For `just dist` (static musl binary): cargo-zigbuild + zig  →  `uv tool install cargo-zigbuild`
 # Docs: https://just.systems  |  Project: https://github.com/iamd3vil/raahi
 
 set shell := ["bash", "-cu"]
 set dotenv-load := false
-
-# ── bindgen / libclang headers ──────────────────────────────────────────────
-# boring-sys generates its bindings with libclang. On systems that have libclang
-# but not its builtin headers (e.g. Debian/Ubuntu `libclang1-N` without
-# `libclang-common-N-dev`), every cargo build dies with
-# "fatal error: 'stddef.h' file not found". Detect that once and point libclang at
-# the C compiler's include dir. An explicit BINDGEN_EXTRA_CLANG_ARGS in the
-# environment always wins; when libclang's own headers exist we add nothing.
-bindgen_detected := `if compgen -G '/usr/lib/llvm-*/lib/clang/*/include/stddef.h' >/dev/null || compgen -G '/usr/lib/clang/*/include/stddef.h' >/dev/null || compgen -G '/usr/lib64/clang/*/include/stddef.h' >/dev/null; then echo ""; else inc="$(cc -print-file-name=include 2>/dev/null || true)"; [[ -f "$inc/stddef.h" ]] && echo "-I$inc" || echo ""; fi`
-export BINDGEN_EXTRA_CLANG_ARGS := env("BINDGEN_EXTRA_CLANG_ARGS", bindgen_detected)
 
 # ── variables ────────────────────────────────────────────────────────────────
 ui_dir      := "ui"
@@ -23,7 +13,7 @@ ui_build    := ui_dir + "/build"
 bin_debug   := "target/debug/raahi"
 bin_release := "target/release/raahi"
 version     := `grep -m1 '^version' Cargo.toml | cut -d'"' -f2`
-# Static distribution target (BoringSSL is cross-compiled with zig via cargo-zigbuild)
+# Static distribution target (C dependencies are cross-compiled with zig via cargo-zigbuild)
 musl_target := "x86_64-unknown-linux-musl"
 bin_musl    := "target/" + musl_target + "/release/raahi"
 dist_dir    := "dist"
@@ -55,12 +45,8 @@ doctor:
     printf "%-12s " "just:";  just --version 2>&1  || echo "MISSING"
     printf "%-12s " "node:";  node --version 2>&1  || echo "MISSING (need ≥20)"
     printf "%-12s " "pnpm:";  pnpm --version 2>&1  || echo "MISSING — will fall back to npm"
-    printf "%-12s " "cmake:"; cmake --version 2>&1 | head -1 || echo "MISSING (needed for boringssl)"
-    printf "%-12s " "go:";    go version 2>&1     || echo "MISSING (needed for boringssl)"
-    printf "%-12s " "perl:";  perl --version 2>&1 | sed -n 2p || echo "MISSING (needed for boringssl asm)"
     printf "%-12s " "zig:";   zig version 2>&1    || echo "MISSING (needed for 'just dist')"
     printf "%-12s " "zigbuild:"; cargo-zigbuild --version 2>&1 || echo "MISSING (needed for 'just dist': uv tool install cargo-zigbuild)"
-    printf "%-12s %s\n" "bindgen:" "${BINDGEN_EXTRA_CLANG_ARGS:-(libclang headers found; no extra args needed)}"
     printf "%-12s " "cc:";    cc --version 2>&1 | head -1 || echo "MISSING"
     echo ""
     echo "== project =="
@@ -243,8 +229,8 @@ release-verify:
     {{bin_release}} --help | head -20 | sed 's/^/help   : /'
     echo "✓ release verified"
 
-# cargo-zigbuild lets zig cross-compile BoringSSL (C++) for musl; musl-tools
-# alone ships no C++ compiler.
+# cargo-zigbuild lets zig cross-compile the C dependencies (ring, SQLite, mimalloc)
+# for musl and link the static binary.
 
 # Build a fully static musl release binary (LTO) → target/x86_64-unknown-linux-musl/release/raahi
 [group('release')]
@@ -254,20 +240,7 @@ build-musl *args="":
     command -v cargo-zigbuild >/dev/null || { echo "✗ cargo-zigbuild not found — install with: uv tool install cargo-zigbuild"; exit 1; }
     command -v zig >/dev/null || { echo "✗ zig not on PATH — the uv tool env ships it as 'python -m ziglang'; add a shim or install zig"; exit 1; }
     rustup target add {{musl_target}} >/dev/null 2>&1 || true
-    # bindgen parses BoringSSL's headers for the musl target; prefer musl's libc
-    # headers (musl-tools) over glibc's when they are installed. The compiler-header
-    # fix is inherited from the justfile-level BINDGEN_EXTRA_CLANG_ARGS.
-    if [[ -d /usr/include/x86_64-linux-musl ]]; then
-        export BINDGEN_EXTRA_CLANG_ARGS="-I/usr/include/x86_64-linux-musl ${BINDGEN_EXTRA_CLANG_ARGS:-}"
-    fi
-    # Noise from the zig toolchain, not from Raahi or BoringSSL:
-    #  - zig's bundled libc++ headers are not marked as system headers, so clang emits
-    #    hundreds of -Wnullability-completeness diagnostics while compiling BoringSSL's C++
-    #    (cc-rs/cmake-rs append the target-specific CXXFLAGS_<target> to the CMake flags);
-    #  - zig's lld warns about rustc's deprecated `-O1` linker flag and about -L dirs that
-    #    boring-sys advertises but the CMake build never creates (GNU ld ignores both).
-    cxx_var="CXXFLAGS_$(echo {{musl_target}} | tr - _)"
-    export "${cxx_var}=${!cxx_var:-} -Wno-nullability-completeness"
+    # zig's lld warns about rustc's deprecated `-O1` linker flag (GNU ld ignores it).
     export RUSTFLAGS="${RUSTFLAGS:-} -Alinker_messages"
     cargo zigbuild --release --target {{musl_target}} {{cargo_extra}} {{args}}
     ls -lh {{bin_musl}}

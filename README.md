@@ -139,7 +139,7 @@ against a temporary database on loopback, not your live instance.
 
 - The latest stable Rust toolchain
 - Node.js 22.12 or newer
-- `cmake`, Go, Perl, and a C or C++ compiler
+- A C compiler
 - [`just`](https://just.systems/)
 - pnpm or npm
 
@@ -148,7 +148,7 @@ For the quickest install, use a release archive or the container image. See [Ins
 On Debian or Ubuntu:
 
 ```bash
-sudo apt install build-essential cmake golang perl
+sudo apt install build-essential
 ```
 
 ### Build and run

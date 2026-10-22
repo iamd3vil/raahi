@@ -1,5 +1,5 @@
 //! Raahi entrypoint: boots the SQLite store, compiles the initial config snapshot,
-//! and runs the Pingora data plane (HTTP + optional boringssl HTTPS with per-SNI
+//! and runs the Pingora data plane (HTTP + optional rustls HTTPS with per-SNI
 //! certificate selection) plus the admin API and health checks as background services.
 
 mod cli;
@@ -22,11 +22,11 @@ use raahi_api::ApiService;
 use raahi_core::{AlpnChallengeRegistry, RouteSpec, ServiceSpec, TargetSpec};
 use raahi_discovery::DiscoveryService;
 use raahi_proxy::{
-    CertHandle, CertStore, HttpLogService, Metrics, RaahiProxy, StreamProxyApp, config_handle,
-    log_channel, sni_tls_settings,
+    AlpnChallengeResponder, CertHandle, CertStore, HttpLogService, Metrics, RaahiProxy,
+    StreamProxyApp, config_handle, log_channel, sni_tls_settings,
 };
 use raahi_store::Store;
-use tracing::{info, warn};
+use tracing::info;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -155,7 +155,7 @@ fn main() -> anyhow::Result<()> {
         }
         let snapshot = store.build_snapshot().await?;
         let settings = snapshot.settings.clone();
-        // Load all certificates into an in-memory SNI store (boringssl serves them all).
+        // Load all certificates into an in-memory SNI store (rustls serves them all).
         let certs = store.list_certificates().await?;
         let cert_store = CertStore::from_certs(certs, settings.active_certificate_id);
         Ok::<_, anyhow::Error>((snapshot, settings, cert_store, store))
@@ -206,15 +206,15 @@ fn main() -> anyhow::Result<()> {
 
     let https_addr = cli.https_addr.or_else(|| settings.proxy_https_addr.clone());
     if let Some(https_addr) = &https_addr {
-        match sni_tls_settings(cert_handle.clone(), alpn_challenges.clone()) {
-            Ok(settings_tls) => {
-                proxy_svc.add_tls_with_settings(https_addr, None, settings_tls);
-                info!(
-                    "proxy HTTPS (boringssl) listener on {https_addr}; {cert_count} issued cert(s), live per-SNI selection"
-                );
-            }
-            Err(e) => warn!("TLS listener disabled ({https_addr}): {e}"),
-        }
+        proxy_svc.add_tls_with_settings(https_addr, None, sni_tls_settings(cert_handle.clone()));
+        proxy_svc
+            .endpoints()
+            .set_pre_tls_callback(Arc::new(AlpnChallengeResponder::new(
+                alpn_challenges.clone(),
+            )));
+        info!(
+            "proxy HTTPS (rustls) listener on {https_addr}; {cert_count} issued cert(s), live per-SNI selection"
+        );
     }
 
     server.add_service(proxy_svc);

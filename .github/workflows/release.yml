@@ -90,8 +90,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.arch }}
-      - name: Install native build dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake golang perl clang
       - name: Install pnpm
         uses: pnpm/action-setup@v6
         with:

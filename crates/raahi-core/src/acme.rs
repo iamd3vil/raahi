@@ -28,6 +28,13 @@ impl AlpnChallengeRegistry {
             .cloned()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.inner
+            .read()
+            .expect("ACME challenge registry poisoned")
+            .is_empty()
+    }
+
     pub fn remove(&self, domain: &str) {
         self.inner
             .write()

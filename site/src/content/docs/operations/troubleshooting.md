@@ -64,14 +64,6 @@ Raahi logs the error and continues without the HTTPS listener. Check:
 
 TLS-ALPN-01 requires public DNS to point at Raahi and public port 443 to reach it. Wildcard certificates require Cloudflare DNS-01. Check the DNS token's zone permissions and remove stale `_acme-challenge` records.
 
-## The build cannot find `stddef.h`
-
-The `just` recipes work around a common libclang packaging problem. If you run Cargo directly, set:
-
-```bash
-export BINDGEN_EXTRA_CLANG_ARGS="-I$(cc -print-file-name=include)"
-```
-
 ## An admin is locked out
 
 Stop Raahi and back up the database. Remove every user or clear `settings.admin_token_hash`, then restart.
