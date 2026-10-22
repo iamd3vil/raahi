@@ -139,7 +139,7 @@ against a temporary database on loopback, not your live instance.
 
 - The latest stable Rust toolchain
 - Node.js 22.12 or newer
-- A C compiler
+- `cmake` and a C compiler
 - [`just`](https://just.systems/)
 - pnpm or npm
 
@@ -148,7 +148,7 @@ For the quickest install, use a release archive or the container image. See [Ins
 On Debian or Ubuntu:
 
 ```bash
-sudo apt install build-essential
+sudo apt install build-essential cmake
 ```
 
 ### Build and run
@@ -189,9 +189,9 @@ GitHub Releases publishes Linux archives for amd64 and arm64. Each archive conta
 
 ```bash
 # Replace amd64 with arm64 when needed.
-archive=raahi-v0.5.0-linux-amd64.tar.gz
-curl -LO "https://github.com/iamd3vil/raahi/releases/download/v0.5.0/$archive"
-curl -LO https://github.com/iamd3vil/raahi/releases/download/v0.5.0/checksums.txt
+archive=raahi-v0.5.1-linux-amd64.tar.gz
+curl -LO "https://github.com/iamd3vil/raahi/releases/download/v0.5.1/$archive"
+curl -LO https://github.com/iamd3vil/raahi/releases/download/v0.5.1/checksums.txt
 checksum_line="$(grep -F "$archive" checksums.txt)"
 expected="${checksum_line#*$'\t'}"
 echo "$expected  $archive" | sha256sum -c -
@@ -208,7 +208,7 @@ docker run --rm \
   -p 8443:8443 \
   -p 127.0.0.1:9080:9080 \
   -v raahi-data:/data \
-  ghcr.io/iamd3vil/raahi:0.5.0
+  ghcr.io/iamd3vil/raahi:0.5.1
 ```
 
 The container stores `raahi.db` in `/data` and serves the bundled admin UI. The command binds the admin listener inside the container and publishes it only on host loopback.
@@ -312,12 +312,12 @@ cd site && npm install && npm run build
 
 ## Release notes
 
-- TLS moves from BoringSSL to rustls, and Raahi runs on Pingora 0.9. Building from source no longer needs Go, cmake, Perl, or libclang.
+- TLS moves from BoringSSL to rustls, and Raahi runs on Pingora 0.9. Building from source no longer needs Go, Perl, or libclang.
 - Raahi strips hop-by-hop headers from upstream requests. WebSocket upgrades still pass through, but other `Upgrade` protocols don't.
 - rustls can't use P-521 keys. Reissue any uploaded P-521 certificate before upgrading, or its hosts lose HTTPS. ACME-issued certificates use P-256.
 - No database migrations.
 - Native Linux archives for amd64 and arm64.
-- Multi-architecture container image at `ghcr.io/iamd3vil/raahi:0.5.0` and `ghcr.io/iamd3vil/raahi:latest`.
+- Multi-architecture container image at `ghcr.io/iamd3vil/raahi:0.5.1` and `ghcr.io/iamd3vil/raahi:latest`.
 - GitHub release publishing through [rlsr](https://rlsr.sarat.dev/).
 
 ## Current limits

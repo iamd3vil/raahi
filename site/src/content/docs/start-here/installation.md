@@ -11,14 +11,14 @@ Raahi ships as one executable plus the built admin UI.
 
 - The latest stable Rust toolchain to compile Raahi
 - Node.js 22.12 or newer
-- A C compiler for native build dependencies
+- `cmake` and a C compiler for native build dependencies
 - `just` for the repository recipes
 - pnpm or npm for the admin UI
 
 On Debian or Ubuntu:
 
 ```bash
-sudo apt install build-essential
+sudo apt install build-essential cmake
 ```
 
 Run the repository check before building:
@@ -33,9 +33,9 @@ GitHub Releases publishes Linux archives for amd64 and arm64. The archive contai
 
 ```bash
 # Replace amd64 with arm64 when needed.
-archive=raahi-v0.5.0-linux-amd64.tar.gz
-curl -LO "https://github.com/iamd3vil/raahi/releases/download/v0.5.0/$archive"
-curl -LO https://github.com/iamd3vil/raahi/releases/download/v0.5.0/checksums.txt
+archive=raahi-v0.5.1-linux-amd64.tar.gz
+curl -LO "https://github.com/iamd3vil/raahi/releases/download/v0.5.1/$archive"
+curl -LO https://github.com/iamd3vil/raahi/releases/download/v0.5.1/checksums.txt
 checksum_line="$(grep -F "$archive" checksums.txt)"
 expected="${checksum_line#*$'\t'}"
 echo "$expected  $archive" | sha256sum -c -
@@ -52,7 +52,7 @@ docker run --rm \
   -p 8443:8443 \
   -p 127.0.0.1:9080:9080 \
   -v raahi-data:/data \
-  ghcr.io/iamd3vil/raahi:0.5.0
+  ghcr.io/iamd3vil/raahi:0.5.1
 ```
 
 The image stores the SQLite database in `/data`. It serves the bundled UI and binds the admin listener inside the container.

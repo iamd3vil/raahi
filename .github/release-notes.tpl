@@ -1,6 +1,8 @@
 # Raahi {{ meta.tag }}
 
-Raahi now terminates TLS with rustls instead of BoringSSL, and it runs on Pingora 0.9. Building from source needs only Rust, Node.js, and a C compiler. Go, cmake, Perl, and libclang are no longer required.
+Raahi now terminates TLS with rustls instead of BoringSSL, and it runs on Pingora 0.9. Building from source no longer needs Go, Perl, or libclang. You still need cmake and a C compiler.
+
+v0.5.0 was tagged but never published, because its container image failed to build without cmake. This release contains the same changes with that fixed.
 
 ## What's new
 

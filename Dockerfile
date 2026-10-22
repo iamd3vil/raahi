@@ -15,6 +15,10 @@ WORKDIR /src
 COPY .git/HEAD ./.git/HEAD
 COPY .git/refs/heads ./.git/refs/heads
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends cmake \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY docs ./docs

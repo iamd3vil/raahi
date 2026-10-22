@@ -1,6 +1,6 @@
 # Raahi — justfile
 # Run `just` to see all recipes, or `just --list` for grouped output.
-# Requires: just, latest stable cargo/rustc, pnpm ≥9 (or npm), a C toolchain
+# Requires: just, latest stable cargo/rustc, pnpm ≥9 (or npm), cmake + a C toolchain
 # For `just dist` (static musl binary): cargo-zigbuild + zig  →  `uv tool install cargo-zigbuild`
 # Docs: https://just.systems  |  Project: https://github.com/iamd3vil/raahi
 
@@ -45,6 +45,7 @@ doctor:
     printf "%-12s " "just:";  just --version 2>&1  || echo "MISSING"
     printf "%-12s " "node:";  node --version 2>&1  || echo "MISSING (need ≥20)"
     printf "%-12s " "pnpm:";  pnpm --version 2>&1  || echo "MISSING — will fall back to npm"
+    printf "%-12s " "cmake:"; cmake --version 2>&1 | head -1 || echo "MISSING (needed for zlib-ng)"
     printf "%-12s " "zig:";   zig version 2>&1    || echo "MISSING (needed for 'just dist')"
     printf "%-12s " "zigbuild:"; cargo-zigbuild --version 2>&1 || echo "MISSING (needed for 'just dist': uv tool install cargo-zigbuild)"
     printf "%-12s " "cc:";    cc --version 2>&1 | head -1 || echo "MISSING"
@@ -229,7 +230,7 @@ release-verify:
     {{bin_release}} --help | head -20 | sed 's/^/help   : /'
     echo "✓ release verified"
 
-# cargo-zigbuild lets zig cross-compile the C dependencies (ring, SQLite, mimalloc)
+# cargo-zigbuild lets zig cross-compile the C dependencies (ring, SQLite, mimalloc, zlib-ng)
 # for musl and link the static binary.
 
 # Build a fully static musl release binary (LTO) → target/x86_64-unknown-linux-musl/release/raahi
