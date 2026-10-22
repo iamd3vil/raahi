@@ -53,8 +53,8 @@ raahi-api = { path = "crates/raahi-api" }
 raahi-acme = { path = "crates/raahi-acme" }
 raahi-discovery = { path = "crates/raahi-discovery" }
 
-pingora = { version = "0.8.1", default-features = false, features = ["proxy", "boringssl"] }
-pingora-limits = "0.8.1"
+pingora = { version = "0.9.0", default-features = false, features = ["proxy", "boringssl"] }
+pingora-limits = "0.9.0"
 
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
