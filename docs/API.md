@@ -218,7 +218,10 @@ discovery configs.
 - Collection endpoints are currently unpaginated. `/requests` alone accepts `limit`, defaulting
   to 100 and capped at 500.
 - Basic/JWT credential secrets, certificate private keys, and WASM bytes are never returned by
-  ordinary resource endpoints. Key-auth API keys are credential identifiers and do appear in
+  ordinary resource endpoints.
+- Basic-auth passwords are stored as bcrypt hashes. The proxy remembers a successful check for
+  five minutes per process, so an app making many requests doesn't pay bcrypt on each one.
+  Failed attempts are never cached, and changing a credential's password invalidates it at once. Key-auth API keys are credential identifiers and do appear in
   credential listings.
 - `GET /api/v1/export?include_secrets=true` returns sensitive material. Handle it as a secret.
 - `POST /api/v1/import` transactionally replaces the current routing configuration and remaps
