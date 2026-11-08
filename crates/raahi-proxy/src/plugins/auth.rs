@@ -1,9 +1,14 @@
 //! key-auth, basic-auth, and jwt plugins. On success they set the authenticated
 //! consumer in [`Effects`]; on failure they short-circuit with 401.
 
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
 use base64::Engine;
 use raahi_core::ProxyConfig;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 use super::{Action, Effects, ReqInput, ShortResp, parse_query};
 
@@ -75,6 +80,54 @@ pub struct BasicAuthCfg {
     pub realm: String,
 }
 
+/// How long a successful basic-auth check is remembered. bcrypt costs ~150 ms per request on purpose; a browser
+/// app sends many requests, so each credential is fully re-verified at most this often.
+const VERIFIED_TTL: Duration = Duration::from_secs(300);
+const VERIFIED_MAX: usize = 1024;
+
+/// Successful checks only, keyed by a keyed SHA-256 of (stored hash, user, password). The key is random per
+/// process, so the cache never holds anything an attacker could test passwords against offline, and a changed
+/// credential (new hash) never matches an old entry. Failed attempts are never cached: guessing still pays bcrypt.
+fn verify_cached(user: &str, pass: &str, hash: &str) -> bool {
+    static SALT: OnceLock<[u8; 32]> = OnceLock::new();
+    static VERIFIED: OnceLock<Mutex<HashMap<[u8; 32], Instant>>> = OnceLock::new();
+    let salt = SALT.get_or_init(|| {
+        let mut salt = [0u8; 32];
+        salt[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+        salt[16..].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+        salt
+    });
+    let key: [u8; 32] = Sha256::new()
+        .chain_update(salt)
+        .chain_update(hash.as_bytes())
+        .chain_update([0])
+        .chain_update(user.as_bytes())
+        .chain_update([0])
+        .chain_update(pass.as_bytes())
+        .finalize()
+        .into();
+    let cache = VERIFIED.get_or_init(|| Mutex::new(HashMap::new()));
+    let now = Instant::now();
+    if let Ok(seen) = cache.lock()
+        && seen
+            .get(&key)
+            .is_some_and(|at| now.duration_since(*at) < VERIFIED_TTL)
+    {
+        return true;
+    }
+    let ok = bcrypt::verify(pass, hash).unwrap_or(false);
+    if ok && let Ok(mut seen) = cache.lock() {
+        if seen.len() >= VERIFIED_MAX {
+            seen.retain(|_, at| now.duration_since(*at) < VERIFIED_TTL);
+            if seen.len() >= VERIFIED_MAX {
+                seen.clear();
+            }
+        }
+        seen.insert(key, now);
+    }
+    ok
+}
+
 pub fn basic_auth(
     c: &BasicAuthCfg,
     input: &ReqInput,
@@ -119,7 +172,7 @@ pub fn basic_auth(
     };
 
     match cfg.basic_index.get(user) {
-        Some((cid, hash)) if bcrypt::verify(pass, hash).unwrap_or(false) => {
+        Some((cid, hash)) if verify_cached(user, pass, hash) => {
             let username = cfg
                 .consumers
                 .get(cid)
@@ -306,4 +359,22 @@ fn jwt_via_jwks(c: &JwtCfg, jwks_url: &str, token: &str, effects: &mut Effects) 
         .to_string();
     effects.consumer = Some((0, name));
     Action::Continue
+}
+
+#[cfg(test)]
+mod verified_cache_tests {
+    use super::verify_cached;
+
+    #[test]
+    fn caches_only_successful_checks_for_the_same_credential() {
+        let hash = bcrypt::hash("correct horse", 4).unwrap();
+        assert!(verify_cached("sarat", "correct horse", &hash));
+        // Served from the cache now, and still exact.
+        assert!(verify_cached("sarat", "correct horse", &hash));
+        assert!(!verify_cached("sarat", "wrong horse", &hash));
+        // A changed credential (new hash) never matches the old entry.
+        let changed = bcrypt::hash("new password", 4).unwrap();
+        assert!(!verify_cached("sarat", "correct horse", &changed));
+        assert!(verify_cached("sarat", "new password", &changed));
+    }
 }
